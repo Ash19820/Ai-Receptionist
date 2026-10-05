@@ -13,7 +13,7 @@ The starter is intentionally business-neutral: a clinic, repair shop, salon, tut
 - An optional LiteLLM Proxy gateway with configurable routes for OpenAI, Gemini, OpenRouter, Groq, and local Ollama.
 - Callback and appointment requests are saved as `needs_review`; the agent must read details back and get the caller's explicit yes before creating one.
 - The caller-facing agent cannot read other callers' open requests. Staff can review the inbox from the local terminal agent.
-- An optional Pipecat live audio runner with Exotel transport, Sarvam speech-to-text, configurable Sarvam or Kokoro speech output, OpenAI language model, and the same MCP tools.
+- An optional Pipecat live audio runner with Exotel transport, Sarvam speech-to-text, configurable Sarvam or Kokoro speech output, the selected LiteLLM-routed language model, and the same MCP tools.
 
 The web and terminal paths are prototypes. The Pipecat runner is a starter integration, not a production phone service: an Exotel account, webhook/WebSocket setup, provider keys, network deployment, monitoring, and field testing are still needed. Live-call speech output uses one configured language per worker; it does not switch voices for each caller yet. A saved request is never a confirmed booking. There is no calendar integration, automatic human transfer, WhatsApp connection, authentication, tenant isolation, or production data-retention policy yet.
 
