@@ -8,14 +8,22 @@ from contextlib import AsyncExitStack
 
 from mcp import StdioServerParameters
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import (
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMRunFrame,
+    LLMTextFrame,
+    ManuallySwitchServiceFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.service_switcher import ServiceSwitcher
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.mcp_service import MCPClient
@@ -30,9 +38,12 @@ from margin_guard.llm_provider import get_llm_config
 SYSTEM_INSTRUCTIONS = """You are a concise, friendly receptionist for one small business.
 Use the verified profile and FAQ tools for business facts. Never invent prices,
 hours, services, availability, policies, or promises. Reply in the caller's
-language where possible, using natural spoken phrasing. Ask one short question
-at a time and collect only details needed for the request. Before creating a
-callback or appointment request, read back the caller's name, contact number,
+language where possible, using natural spoken phrasing. Speak English in Latin
+script. Speak Hindi and Hindi-English mix in Devanagari, not Latin transliteration.
+Keep ordinary replies to one or two short sentences, about 35 words or fewer.
+Do not use lists, markdown, emojis, stage directions, or verbal filler. Ask one
+short question at a time and collect only details needed for the request.
+Before creating a callback or appointment request, read back the caller's name, contact number,
 service, and preferred time as applicable, then wait for an explicit yes. Set
 caller_confirmed=true only after the caller gives that yes.
 Requests are saved for staff review and are not confirmed bookings. Do not claim
@@ -41,8 +52,56 @@ business information; do not claim a handoff happened unless an integration
 confirms it. Do not provide professional advice outside the configured services."""
 
 
-def _speech_output():
-    provider = os.getenv("VOICE_TTS_PROVIDER", "sarvam").strip().lower()
+class ResponseLanguageTTSRouter(FrameProcessor):
+    """Choose the speech service from the script used by each assistant reply."""
+
+    def __init__(self, hindi_service, english_service):
+        super().__init__()
+        self._services = {"hindi": hindi_service, "english": english_service}
+        self._selected_service = None
+        self._pending_text: list[LLMTextFrame] = []
+
+    @staticmethod
+    def _response_language(text: str) -> str | None:
+        # The system prompt asks for Devanagari for Hindi/Hinglish and Latin
+        # script for English, so the first spoken letters provide a quick,
+        # stable routing signal without delaying the whole response.
+        for char in text:
+            if char.isalpha():
+                return "english" if char.isascii() else "hindi"
+        return None
+
+    async def _select_and_flush(self, service_name: str, direction: FrameDirection) -> None:
+        service = self._services[service_name]
+        await self.push_frame(ManuallySwitchServiceFrame(service=service), direction)
+        for text_frame in self._pending_text:
+            await self.push_frame(text_frame, direction)
+        self._pending_text.clear()
+        self._selected_service = service
+
+    async def process_frame(self, frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+
+        if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, LLMFullResponseStartFrame):
+                self._selected_service = None
+                self._pending_text.clear()
+            elif isinstance(frame, LLMTextFrame) and self._selected_service is None:
+                self._pending_text.append(frame)
+                language = self._response_language("".join(item.text for item in self._pending_text))
+                if language:
+                    await self._select_and_flush(language, direction)
+                return
+            elif isinstance(frame, LLMFullResponseEndFrame) and self._selected_service is None:
+                # Empty or punctuation-only responses are exceptionally rare;
+                # use the Hindi voice as the default.
+                await self._select_and_flush("hindi", direction)
+
+        await self.push_frame(frame, direction)
+
+
+def _speech_output(provider: str | None = None):
+    provider = (provider or os.getenv("VOICE_TTS_PROVIDER", "auto")).strip().lower()
     if provider == "sarvam":
         from pipecat.services.sarvam.tts import SarvamTTSService
         from pipecat.transcriptions.language import Language
@@ -72,27 +131,85 @@ def _speech_output():
                 model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3"),
                 voice=os.getenv("SARVAM_TTS_VOICE", "shubh"),
                 language=language_map[language_code],
+                pace=float(os.getenv("SARVAM_TTS_PACE", "1.0")),
+                temperature=float(os.getenv("SARVAM_TTS_TEMPERATURE", "0.8")),
+            ),
+        )
+    if provider == "piper":
+        from pipecat.services.piper.tts import PiperTTSService
+        from pipecat.transcriptions.language import Language
+
+        return PiperTTSService(
+            settings=PiperTTSService.Settings(
+                voice=os.getenv("PIPER_HI_VOICE", "hi_IN-priyamvada-medium"),
+                language=Language.HI,
             ),
         )
     if provider == "kokoro":
+        if sys.version_info >= (3, 14):
+            raise RuntimeError(
+                "The published kokoro-onnx package does not support Python 3.14 yet. "
+                "Use Python 3.13 or older and install the voice-kokoro extra."
+            )
         from pipecat.services.kokoro.tts import KokoroTTSService
         from pipecat.transcriptions.language import Language
 
         return KokoroTTSService(
             settings=KokoroTTSService.Settings(
-                voice=os.getenv("KOKORO_VOICE", "hf_alpha"),
-                language=Language.HI,
+                voice=os.getenv("KOKORO_VOICE", "af_heart"),
+                language=Language.EN,
             ),
         )
-    raise RuntimeError("VOICE_TTS_PROVIDER must be 'sarvam' or 'kokoro'.")
+    if provider == "gemini":
+        from pipecat.services.google.tts import GeminiTTSService
+
+        api_key = os.getenv("GEMINI_TTS_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise RuntimeError("Set GEMINI_TTS_API_KEY to use Gemini speech output.")
+        return GeminiTTSService(
+            api_key=api_key,
+            settings=GeminiTTSService.Settings(
+                model=os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-lite-tts"),
+                voice=os.getenv("GEMINI_TTS_VOICE", "Kore"),
+                prompt=(
+                    "Speak like a warm, attentive local business receptionist. "
+                    "Use natural conversational pacing and gentle expression, not a "
+                    "formal announcement. Pronounce Hindi and Indian names naturally."
+                ),
+            ),
+        )
+    raise RuntimeError(
+        "VOICE_TTS_PROVIDER must be 'auto', 'piper', 'kokoro', 'sarvam', or 'gemini'."
+    )
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
-    from pipecat.services.sarvam.stt import SarvamSTTService
+    stt_provider = os.getenv("VOICE_STT_PROVIDER", "whisper").strip().lower()
+    if stt_provider == "whisper":
+        from pipecat.services.whisper.stt import WhisperSTTService
 
-    sarvam_key = os.getenv("SARVAM_API_KEY")
-    if not sarvam_key:
-        raise RuntimeError("Set SARVAM_API_KEY to use the configured Indian-language speech recognizer.")
+        stt = WhisperSTTService(
+            device=os.getenv("WHISPER_DEVICE", "cpu"),
+            compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
+            settings=WhisperSTTService.Settings(
+                model=os.getenv("WHISPER_MODEL", "base"),
+                language=None,
+            ),
+        )
+    elif stt_provider == "sarvam":
+        from pipecat.services.sarvam.stt import SarvamSTTService
+
+        sarvam_key = os.getenv("SARVAM_API_KEY")
+        if not sarvam_key:
+            raise RuntimeError("Set SARVAM_API_KEY to use Sarvam speech recognition.")
+        stt = SarvamSTTService(
+            api_key=sarvam_key,
+            settings=SarvamSTTService.Settings(
+                model=os.getenv("SARVAM_STT_MODEL", "saaras:v3"),
+            ),
+        )
+    else:
+        raise RuntimeError("VOICE_STT_PROVIDER must be 'whisper' or 'sarvam'.")
     llm_config = get_llm_config()
 
     db_file = os.path.abspath(os.path.expanduser(os.getenv("RECEPTIONIST_DB", "./data/receptionist.sqlite3")))
@@ -123,13 +240,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         inbox_tools = await request_inbox.tools()
         tools = [*business_tools, *inbox_tools]
 
-        stt = SarvamSTTService(
-            api_key=sarvam_key,
-            settings=SarvamSTTService.Settings(
-                model=os.getenv("SARVAM_STT_MODEL", "saaras:v3"),
-            ),
-        )
-        tts = _speech_output()
+        tts_provider = os.getenv("VOICE_TTS_PROVIDER", "auto").strip().lower()
+        tts_router = None
+        if tts_provider == "auto":
+            hindi_tts = _speech_output("piper")
+            kokoro_tts = _speech_output("kokoro")
+            tts_router = ResponseLanguageTTSRouter(hindi_tts, kokoro_tts)
+            tts = ServiceSwitcher(services=[hindi_tts, kokoro_tts])
+        else:
+            tts = _speech_output(tts_provider)
         llm_base_url = llm_config.base_url
         if llm_config.provider == "ollama" and llm_base_url:
             llm_base_url = llm_base_url.rstrip("/")
@@ -141,6 +260,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             settings=OpenAILLMService.Settings(
                 model=llm_config.model,
                 system_instruction=SYSTEM_INSTRUCTIONS,
+                max_completion_tokens=180,
             ),
         )
         context = LLMContext(tools=tools)
@@ -154,6 +274,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
                 stt,
                 user_aggregator,
                 llm,
+                *([tts_router] if tts_router else []),
                 tts,
                 transport.output(),
                 assistant_aggregator,

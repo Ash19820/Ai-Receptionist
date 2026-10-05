@@ -13,9 +13,9 @@ The starter is intentionally business-neutral: a clinic, repair shop, salon, tut
 - An optional LiteLLM Proxy gateway with configurable routes for OpenAI, Gemini, OpenRouter, Groq, and local Ollama.
 - Callback and appointment requests are saved as `needs_review`; the agent must read details back and get the caller's explicit yes before creating one.
 - The caller-facing agent cannot read other callers' open requests. Staff can review the inbox from the local terminal agent.
-- An optional Pipecat live audio runner with Exotel transport, Sarvam speech-to-text, configurable Sarvam or Kokoro speech output, the selected LiteLLM-routed language model, and the same MCP tools.
+- An optional Pipecat live audio runner with Exotel transport, local Whisper speech-to-text, Hindi Piper output, English Kokoro output, the selected LiteLLM-routed language model, and the same MCP tools.
 
-The web and terminal paths are prototypes. The Pipecat runner is a starter integration, not a production phone service: an Exotel account, webhook/WebSocket setup, provider keys, network deployment, monitoring, and field testing are still needed. Live-call speech output uses one configured language per worker; it does not switch voices for each caller yet. A saved request is never a confirmed booking. There is no calendar integration, automatic human transfer, WhatsApp connection, authentication, tenant isolation, or production data-retention policy yet.
+The web and terminal paths are prototypes. The Pipecat runner is a starter integration, not a production phone service: an Exotel account, webhook/WebSocket setup, network deployment, monitoring, and field testing are still needed. With the local defaults, speech recognition uses Whisper `base` on CPU, English speech uses Kokoro, and Hindi or Devanagari Hindi-English uses Piper. These smaller local models trade some recognition accuracy and voice naturalness for offline use and low hardware requirements; benchmark them with real callers before relying on them. A saved request is never a confirmed booking. There is no calendar integration, automatic human transfer, WhatsApp connection, authentication, tenant isolation, or production data-retention policy yet.
 
 ## Set up the business profile
 
@@ -54,12 +54,14 @@ LiteLLM Proxy is the model gateway. The receptionist app reads only its gateway 
 | `LLM_MODEL` | Provider key | Model configured in `litellm_config.yaml` |
 | --- | --- | --- |
 | `receptionist-openai` | `OPENAI_API_KEY` | `gpt-4.1-mini` |
-| `receptionist-gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
-| `receptionist-openrouter` | `OPENROUTER_API_KEY` | `google/gemini-2.5-flash` |
+| `receptionist-gemini` | `GEMINI_API_KEY` | `gemini-3.8-flash` |
+| `receptionist-openrouter` | `OPENROUTER_API_KEY` | `google/gemini-3.8-flash` |
 | `receptionist-groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
 | `receptionist-ollama` | No provider key | `qwen2.5:7b` |
 
 For Ollama, install and start Ollama, then download the configured model (for example, `ollama pull qwen2.5:7b`). The default server address is `http://localhost:11434`; change `OLLAMA_BASE_URL` in `gateway.env` if yours differs. You can edit the alias and provider model in `litellm_config.yaml` to add or replace routes. Keep keys in `.env` and `gateway.env`, which are excluded from Git. The sample gateway key is for local development; keep both services bound to localhost and use a separately scoped key with a protected deployment before making the gateway reachable outside your computer.
+
+The Gemini and OpenRouter Gemini routes set low reasoning effort for faster receptionist replies; complex tasks may benefit less from that setting.
 
 The gateway uses model aliases and environment-backed secrets, with one retry, a request timeout, and a cooldown after repeated failures. Routing is explicit: switching aliases does not silently switch providers or add cost. LiteLLM recommends simple-shuffle routing for multiple deployments under one alias; use that if you later add equivalent backups. Tool calling still depends on provider/model compatibility. See LiteLLM's [routing documentation](https://docs.litellm.ai/docs/routing) and [provider list](https://docs.litellm.ai/docs/providers).
 
@@ -67,13 +69,15 @@ Browser speech recognition depends on the browser and may send audio to its spee
 
 ## Optional live voice runner
 
-The live audio path uses [Pipecat](https://github.com/pipecat-ai/pipecat), following the project’s [Exotel inbound example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot/inbound), [Sarvam voice example](https://github.com/pipecat-ai/pipecat/blob/main/examples/voice/voice-sarvam.py), and [MCP client integration](https://docs.pipecat.ai/api-reference/server/utilities/mcp/mcp). Install the optional voice dependencies:
+The live audio path uses [Pipecat](https://github.com/pipecat-ai/pipecat), following the project’s [Exotel inbound example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot/inbound) and [MCP client integration](https://docs.pipecat.ai/api-reference/server/utilities/mcp/mcp). On an 8 GB CPU-only laptop, start with the local Whisper `base` model, Piper Hindi voice, and Kokoro English voice:
 
 ```bash
-pip install -e '.[gateway,voice]'
+python3.13 -m venv .venv-voice
+source .venv-voice/bin/activate
+pip install -e '.[gateway,voice-local]'
 ```
 
-Configure the selected `LLM_MODEL` alias as above, keep the gateway running, and set `SARVAM_API_KEY`. Sarvam is the India-first default for speech input and output. Change `SARVAM_TTS_LANGUAGE` for the deployment's main spoken language. The voice runner uses the same LiteLLM gateway; check the provider/model's tool-calling support. [Kokoro 82M](https://github.com/hexgrad/kokoro) is a local Hindi-capable TTS alternative; Pipecat's [Kokoro adapter](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) runs it locally, but Kokoro only speaks and still needs a separate speech recognizer. To add it, install `pip install -e '.[gateway,voice,voice-kokoro]'` using Python 3.11–3.13, then set `VOICE_TTS_PROVIDER=kokoro`. This environment uses Python 3.14, which cannot currently resolve Kokoro's optional package. [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) can be evaluated later behind the TTS boundary, but its official release currently lists ten languages without Hindi.
+Use Python 3.13 for this optional voice environment; the currently published Kokoro runtime does not support Python 3.14. `VOICE_STT_PROVIDER=whisper` downloads the multilingual Faster Whisper `base` model on first launch and runs it on CPU with int8. Change `WHISPER_MODEL` to `tiny` for lower memory and faster responses, or `small` for a quality comparison if your machine has enough free memory. Whisper processes each completed speech segment, so it may wait for the caller to finish before the transcript is ready. `VOICE_TTS_PROVIDER=auto` selects Piper for Hindi and Devanagari Hindi-English and Kokoro (`af_heart`) for English. Their models are downloaded and cached on first use. The in-process Piper package is GPL-3.0 licensed, and each downloaded voice has its own terms. Review those licenses before redistributing a packaged application. For comparison, set `VOICE_STT_PROVIDER=sarvam` and/or `VOICE_TTS_PROVIDER=sarvam`; these choices require `SARVAM_API_KEY` and may incur provider charges. To use Kokoro or Piper for every response, set `VOICE_TTS_PROVIDER=kokoro` or `piper`. The voice runner sends language-model requests through LiteLLM as before. See Pipecat's [Whisper](https://docs.pipecat.ai/api-reference/server/services/stt/whisper), [Piper](https://docs.pipecat.ai/api-reference/server/services/tts/piper), and [Kokoro](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) service docs.
 
 Start the Pipecat runner with:
 

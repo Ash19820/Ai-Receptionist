@@ -19,10 +19,16 @@ dependencies = [
 
 [project.optional-dependencies]
 gateway = [
-  "litellm[proxy]>=1.83.0",
+  "litellm[proxy]>=1.103.0",
 ]
 voice = [
-  "pipecat-ai[runner,openai,sarvam]>=1.12.0,<2.0.0",
+  "pipecat-ai[runner,openai]>=1.12.0,<2.0.0",
+]
+voice-local = [
+  "pipecat-ai[runner,openai,whisper,piper,kokoro]>=1.12.0,<2.0.0",
+]
+voice-cloud = [
+  "pipecat-ai[runner,openai,sarvam,google]>=1.12.0,<2.0.0",
 ]
 voice-kokoro = [
   "pipecat-ai[kokoro]>=1.12.0,<2.0.0",

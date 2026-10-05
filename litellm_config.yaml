@@ -8,13 +8,15 @@ model_list:
 
   - model_name: receptionist-gemini
     litellm_params:
-      model: gemini/gemini-2.5-flash
+      model: gemini/gemini-3.8-flash
       api_key: os.environ/GEMINI_API_KEY
+      reasoning_effort: low
 
   - model_name: receptionist-openrouter
     litellm_params:
-      model: openrouter/google/gemini-2.5-flash
+      model: openrouter/google/gemini-3.8-flash
       api_key: os.environ/OPENROUTER_API_KEY
+      reasoning_effort: low
 
   - model_name: receptionist-groq
     litellm_params:
