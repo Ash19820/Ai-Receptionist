@@ -77,7 +77,13 @@ source .venv-voice/bin/activate
 pip install -e '.[gateway,voice-local]'
 ```
 
-Use Python 3.13 for this optional voice environment; the currently published Kokoro runtime does not support Python 3.14. `VOICE_STT_PROVIDER=whisper` downloads the multilingual Faster Whisper `base` model on first launch and runs it on CPU with int8. Change `WHISPER_MODEL` to `tiny` for lower memory and faster responses, or `small` for a quality comparison if your machine has enough free memory. Whisper processes each completed speech segment, so it may wait for the caller to finish before the transcript is ready. `VOICE_TTS_PROVIDER=auto` selects Piper for Hindi and Devanagari Hindi-English and Kokoro (`af_heart`) for English. Their models are downloaded and cached on first use. The in-process Piper package is GPL-3.0 licensed, and each downloaded voice has its own terms. Review those licenses before redistributing a packaged application. For comparison, set `VOICE_STT_PROVIDER=sarvam` and/or `VOICE_TTS_PROVIDER=sarvam`; these choices require `SARVAM_API_KEY` and may incur provider charges. To use Kokoro or Piper for every response, set `VOICE_TTS_PROVIDER=kokoro` or `piper`. The voice runner sends language-model requests through LiteLLM as before. See Pipecat's [Whisper](https://docs.pipecat.ai/api-reference/server/services/stt/whisper), [Piper](https://docs.pipecat.ai/api-reference/server/services/tts/piper), and [Kokoro](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) service docs.
+Use Python 3.13 for this optional voice environment; the currently published Kokoro runtime does not support Python 3.14. `VOICE_STT_PROVIDER=whisper` downloads the multilingual Faster Whisper `base` model on first launch and runs it on CPU with int8. Change `WHISPER_MODEL` to `tiny` for lower memory and faster responses, or `small` for a quality comparison if your machine has enough free memory. Whisper processes each completed speech segment, so it may wait for the caller to finish before the transcript is ready.
+
+`VOICE_TTS_PROVIDER=auto` selects services from `VOICE_TTS_ROUTES`. The default, `hi=piper,en=kokoro`, sends Hindi and Devanagari Hindi-English to Piper and English to Kokoro (`af_heart`). Add a route such as `ta=some-provider` to configure another language after registering an adapter that supports it. `VOICE_TTS_LATIN_LANGUAGE` chooses the route for Latin-script replies (English by default); set it to `es` for a Spanish-first business and add a matching `es=provider` route. `VOICE_TTS_FALLBACK_LANGUAGE` chooses the route for text whose script cannot be identified. Model and voice settings stay with their adapter, such as `PIPER_HI_VOICE` and `KOKORO_VOICE`. First use downloads model files into the local cache. When selecting a single TTS provider, set `VOICE_TTS_LANGUAGE` if it should speak a language other than its default.
+
+Speech services use a small registry in `src/margin_guard/speech/providers.py`. To add a model, write a factory that returns a Pipecat STT or TTS service and register it with `SPEECH_PROVIDERS.register_stt(...)` or `SPEECH_PROVIDERS.register_tts(...)`. A separately installed adapter package can register itself on import; set `SPEECH_PROVIDER_MODULES=your_package.speech_adapter` to load it. For example, an adapter can register `SPEECH_PROVIDERS.register_tts("indic_mio", build_tts)` where `build_tts(language)` creates that provider's Pipecat service. Then select it through `VOICE_STT_PROVIDER` or `VOICE_TTS_ROUTES`, for example `hi=indic_mio,en=kokoro`. The call pipeline and language router stay unchanged when a provider is replaced. Use `VOICE_TTS_PROVIDER=<name>` to use one provider for every response.
+
+The in-process Piper package is GPL-3.0 licensed, and each downloaded voice has its own terms. Review those licenses before redistributing a packaged application. For comparison, set `VOICE_STT_PROVIDER=sarvam` and/or route a language to `sarvam`; these choices require `SARVAM_API_KEY` and may incur provider charges. The voice runner sends language-model requests through LiteLLM as before. See Pipecat's [Whisper](https://docs.pipecat.ai/api-reference/server/services/stt/whisper), [Piper](https://docs.pipecat.ai/api-reference/server/services/tts/piper), and [Kokoro](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) service docs.
 
 Start the Pipecat runner with:
 
@@ -100,13 +106,16 @@ flowchart LR
   BI --> P[Owner-managed business profile]
   RI --> DB[(Local SQLite request inbox)]
   V[Business owner] --> DB
-  PI[Pipecat voice channel] --> STT[Speech recognition]
+  PI[Pipecat voice channel] --> SR[STT provider registry]
+  SR --> STT[Whisper / Sarvam / future STT adapter]
   STT --> A
-  A --> TTS[Speech output]
+  A --> TR[Language-based TTS router]
+  TR --> TT[Configured TTS provider registry]
+  TT --> TTS[Piper / Kokoro / Sarvam / Gemini / future TTS adapter]
   TTS --> PI
 ```
 
-Pipecat is the real-time voice pipeline and transport layer; it is not the speech model. Sarvam or Kokoro provides voice services, the language model handles conversation, and MCP exposes bounded business actions. The web and terminal prototypes currently use the OpenAI Agents SDK. They reuse the MCP servers rather than sharing a single agent runtime.
+Pipecat is the real-time voice pipeline and transport layer; it is not the speech model. The STT and TTS registries translate stable provider names into Pipecat services, keeping model-specific settings inside their adapters. The language model handles conversation, and MCP exposes bounded business actions. The web and terminal prototypes currently use the OpenAI Agents SDK. They reuse the MCP servers rather than sharing a single agent runtime.
 
 ## Borrowed patterns and source projects
 
@@ -119,7 +128,7 @@ These projects inform the design; this repository does not copy their source. Ke
 
 ## Useful next steps
 
-1. Test Hindi and Hinglish understanding and voice pronunciation with consenting local business owners; compare Sarvam and Kokoro on the same short call scripts, including the fixed-language output limitation.
+1. Test Hindi and Hinglish understanding and voice pronunciation with consenting local business owners; compare local and hosted STT/TTS adapters on the same short call scripts.
 2. Add explicit human handoff and a real scheduling integration, keeping appointment requests distinct from confirmed bookings.
 3. Add authentication, business-level data separation, encryption, retention/deletion controls, and call-consent handling before any real customer data.
 4. Measure missed-call recovery, request accuracy, latency, owner corrections, and cost per completed conversation before choosing a narrow vertical or adding training.
