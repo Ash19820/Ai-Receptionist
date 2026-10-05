@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "common-ai-receptionist"
+version = "0.1.0"
+description = "A configurable AI receptionist prototype with pluggable business tools."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "mcp[cli]>=2.0.0",
+  "openai-agents>=0.2.8",
+  "python-dotenv>=1.0.1",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[project.optional-dependencies]
+voice = [
+  "pipecat-ai[runner,openai,sarvam]>=1.12.0,<2.0.0",
+]
+voice-kokoro = [
+  "pipecat-ai[kokoro]>=1.12.0,<2.0.0",
+]
+
+[project.scripts]
+ai-receptionist = "margin_guard.cli:main"
+ai-receptionist-web = "margin_guard.web:main"
+ai-receptionist-voice = "margin_guard.voice_agent:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/margin_guard"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/margin_guard/static/index.html" = "margin_guard/static/index.html"
+"src/margin_guard/config/business_profile.example.json" = "margin_guard/config/business_profile.example.json"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

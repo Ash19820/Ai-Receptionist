@@ -1,0 +1,24 @@
+{
+  "business_name": "Your Business Name",
+  "business_type": "local_service_business",
+  "timezone": "Asia/Kolkata",
+  "languages": ["hi-IN", "en-IN"],
+  "greeting": "Namaste. Thanks for calling. How can I help?",
+  "human_handoff_phone": "",
+  "hours": [
+    {"day": "Monday", "open": "09:00", "close": "18:00"},
+    {"day": "Tuesday", "open": "09:00", "close": "18:00"},
+    {"day": "Wednesday", "open": "09:00", "close": "18:00"},
+    {"day": "Thursday", "open": "09:00", "close": "18:00"},
+    {"day": "Friday", "open": "09:00", "close": "18:00"},
+    {"day": "Saturday", "open": "09:00", "close": "14:00"}
+  ],
+  "service_area": [],
+  "services": [],
+  "faqs": [],
+  "policies": {
+    "appointment_mode": "request_only",
+    "never_guess_prices_or_availability": true,
+    "handoff_when_uncertain": true
+  }
+}

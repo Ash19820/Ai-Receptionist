@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f4ec"><title>AI Receptionist — Demo</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Noto Sans Devanagari",sans-serif;color:#1e2b25;background:#f7f4ec;font-size:18px}
+    *{box-sizing:border-box}body{margin:0}main{max-width:720px;margin:auto;min-height:100vh;padding:20px 16px 36px}
+    header{display:flex;justify-content:space-between;align-items:center;margin:8px 0 22px}h1{font-size:1.4rem;margin:0} .tag{font-size:.8rem;color:#4b6256}
+    .intro{background:#e7eee6;border-radius:20px;padding:20px;margin-bottom:18px}.intro h2{font-size:1.2rem;margin:0 0 8px}.intro p{margin:0;color:#45574c;line-height:1.5}
+    .actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}.big{min-height:74px;border:0;border-radius:16px;background:#226344;color:white;font-size:1.05rem;font-weight:700;padding:12px;cursor:pointer}.big.secondary{background:#fff;color:#234331;border:2px solid #cbd8cd}
+    button:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #e69d36;outline-offset:2px}button:disabled{opacity:.6}
+    .entry{background:#fff;border:1px solid #e1e2d9;border-radius:18px;padding:14px}.entry label{display:block;font-weight:650;margin:0 0 8px}textarea{width:100%;min-height:90px;border:1px solid #cbd2c8;border-radius:12px;padding:12px;font:inherit;font-size:1rem;resize:vertical} .row{display:flex;gap:10px;align-items:center;margin-top:10px}select{flex:1;min-width:0;border:1px solid #cbd2c8;border-radius:10px;padding:10px;background:white;font:inherit}.send{border:0;border-radius:11px;background:#183e2c;color:white;padding:12px 18px;font:inherit;font-weight:700}
+    .hint{font-size:.82rem;color:#59695f;margin:10px 2px}.feed{display:grid;gap:12px;margin:18px 0}.bubble{border-radius:16px;padding:14px 16px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.owner{background:#e7e1d3;margin-left:18%}.agent{background:#fff;border:1px solid #e1e2d9;margin-right:8%}.approval{margin-top:12px;padding-top:12px;border-top:1px solid #ddd}.approval pre{white-space:pre-wrap;overflow-wrap:anywhere;font: .85rem ui-monospace,monospace;background:#f5f5f0;padding:10px;border-radius:8px}.approve-actions{display:flex;gap:10px}.approve-actions button{flex:1;min-height:52px;border:0;border-radius:11px;font:inherit;font-weight:700}.yes{background:#226344;color:white}.no{background:#eee5df;color:#542f25}.busy{color:#526456;text-align:center;padding:16px}.foot{font-size:.78rem;color:#68756d;margin-top:22px;line-height:1.45;text-align:center}
+    @media(max-width:420px){main{padding:14px 12px 28px}.big{font-size:.95rem}.actions{gap:8px}.owner{margin-left:10%}.agent{margin-right:2%}}
+  </style>
+</head>
+<body><main>
+  <header><h1>AI Receptionist</h1><span class="tag">Business-ready demo</span></header>
+  <section class="intro"><h2>Speak to the receptionist</h2><p>Test a common receptionist workflow: ask about services or hours, request information, or leave a callback or appointment request. Business facts come from a configurable profile. Requests remain pending for staff review.</p></section>
+  <div class="actions"><button class="big" id="speak" type="button">🎙️ Speak to receptionist</button><button class="big secondary" id="sample" type="button">💬 Try a sample question</button></div>
+  <section class="entry"><label for="message">Say or type what a caller might ask</label><textarea id="message" placeholder="What time do you close? Can I book a service tomorrow?"></textarea><div class="row"><select id="language" aria-label="Spoken language"><option value="hi-IN">हिन्दी</option><option value="en-IN">English (India)</option><option value="bn-IN">বাংলা</option><option value="mr-IN">मराठी</option><option value="ta-IN">தமிழ்</option><option value="te-IN">తెలుగు</option></select><button class="send" id="send" type="button">Send</button></div></section>
+  <p class="hint">A browser speech demo only. This is not connected to a public business phone number yet.</p>
+  <section class="feed" id="feed" aria-live="polite"></section>
+  <p class="foot">Prototype only. Spoken or typed messages are sent to the configured AI provider. Do not enter real customer information. Browser speech recognition depends on device and language support.</p>
+</main>
+<script>
+const feed=document.querySelector('#feed'), message=document.querySelector('#message');
+function bubble(text,kind='agent'){const el=document.createElement('div');el.className='bubble '+kind;el.textContent=text;feed.append(el);el.scrollIntoView({behavior:'smooth',block:'nearest'});return el}
+document.querySelector('#sample').onclick=()=>{message.value='What services do you offer?';message.focus()};
+document.querySelector('#speak').onclick=()=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){bubble('This browser does not support speech input. Type a sample caller question instead.');return}const rec=new SR();rec.lang=document.querySelector('#language').value;rec.interimResults=false;rec.onresult=e=>{message.value=e.results[0][0].transcript;document.querySelector('#send').click()};rec.onerror=()=>bubble('Could not understand that. Please try again or type the caller question.');rec.start()};
+function speech(text){if(!('speechSynthesis'in window))return;const u=new SpeechSynthesisUtterance(text);u.lang=document.querySelector('#language').value;window.speechSynthesis.speak(u)}
+async function api(url,data){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const v=await r.json();if(!r.ok)throw Error(v.detail||'कुछ गड़बड़ हुई।');return v}
+function approvalCard(parent,approval){const box=document.createElement('div');box.className='approval';const title=document.createElement('b');title.textContent='सेव करने से पहले देखें';box.append(title);for(const a of approval.actions){const pre=document.createElement('div');pre.textContent=a.summary;box.append(pre)}const buttons=document.createElement('div');buttons.className='approve-actions';for(const [label,ok,cls] of [['हाँ, सेव करें',true,'yes'],['नहीं',false,'no']]){const b=document.createElement('button');b.className=cls;b.textContent=label;b.onclick=async()=>{buttons.remove();const wait=bubble('देखते हैं…');try{const out=await api('/api/approval',{request_id:approval.request_id,approved:ok});wait.remove();bubble(out.reply);if(out.approval)approvalCard(parent,out.approval);else speech(out.reply)}catch(e){wait.textContent=e.message}};buttons.append(b)}box.append(buttons);parent.append(box)}
+document.querySelector('#send').onclick=async()=>{const text=message.value.trim();if(!text){bubble('पहले बोलकर या लिखकर पूछें।');return}bubble(text,'owner');const wait=bubble('आपकी बात समझ रहा हूँ…');document.querySelector('#send').disabled=true;try{const out=await api('/api/chat',{message:text});wait.remove();const answer=bubble(out.reply);if(out.approval)approvalCard(answer,out.approval);else speech(out.reply);message.value=''}catch(e){wait.textContent=e.message}finally{document.querySelector('#send').disabled=false}};
+</script></body></html>
