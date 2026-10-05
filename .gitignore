@@ -1,5 +1,8 @@
 .env
 .env
+gateway.env
+gateway.env.*
+!gateway.env.example
 .venv/
 __pycache__/
 *.py[cod]

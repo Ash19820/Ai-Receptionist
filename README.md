@@ -10,6 +10,7 @@ The starter is intentionally business-neutral: a clinic, repair shop, salon, tut
 - A web chat with optional browser speech recognition.
 - A terminal chat for trying the receptionist.
 - Two MCP servers: verified business information and a caller-request inbox.
+- An optional LiteLLM Proxy gateway with configurable routes for OpenAI, Gemini, OpenRouter, Groq, and local Ollama.
 - Callback and appointment requests are saved as `needs_review`; the agent must read details back and get the caller's explicit yes before creating one.
 - The caller-facing agent cannot read other callers' open requests. Staff can review the inbox from the local terminal agent.
 - An optional Pipecat live audio runner with Exotel transport, Sarvam speech-to-text, configurable Sarvam or Kokoro speech output, OpenAI language model, and the same MCP tools.
@@ -24,19 +25,43 @@ The profile is the business adaptation layer. Add or change `services`, `faqs`, 
 
 ## Run the web or terminal prototype
 
-Requires Python 3.11+ and an OpenAI API key.
+Requires Python 3.11+, a provider account/key (or local Ollama), and the LiteLLM Proxy gateway.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e '.[gateway]'
 cp .env.example .env
+cp gateway.env.example gateway.env
 cp src/margin_guard/config/business_profile.example.json business-profile.json
-# Set OPENAI_API_KEY and BUSINESS_PROFILE in .env
+# Set LLM_API_KEY and LITELLM_MASTER_KEY to the same local-only value.
+# Put the selected provider key in gateway.env.
+python scripts/run_gateway.py
+```
+
+In a second terminal, activate the same virtual environment and run:
+
+```bash
 ai-receptionist-web
 ```
 
 Open `http://127.0.0.1:8000`. The server binds to localhost. Set `RECEPTIONIST_DB` to choose a local SQLite file. To use the terminal version, run `ai-receptionist`.
+
+### Choose a language model route
+
+LiteLLM Proxy is the model gateway. The receptionist app reads only its gateway URL, model alias, and gateway key from `.env`. The gateway runner separately loads `gateway.env`, so provider keys stay out of the app process and MCP tool subprocesses. Select one alias in `.env`, set that provider's key in `gateway.env`, and restart the gateway:
+
+| `LLM_MODEL` | Provider key | Model configured in `litellm_config.yaml` |
+| --- | --- | --- |
+| `receptionist-openai` | `OPENAI_API_KEY` | `gpt-4.1-mini` |
+| `receptionist-gemini` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
+| `receptionist-openrouter` | `OPENROUTER_API_KEY` | `google/gemini-2.5-flash` |
+| `receptionist-groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `receptionist-ollama` | No provider key | `qwen2.5:7b` |
+
+For Ollama, install and start Ollama, then download the configured model (for example, `ollama pull qwen2.5:7b`). The default server address is `http://localhost:11434`; change `OLLAMA_BASE_URL` in `gateway.env` if yours differs. You can edit the alias and provider model in `litellm_config.yaml` to add or replace routes. Keep keys in `.env` and `gateway.env`, which are excluded from Git. The sample gateway key is for local development; keep both services bound to localhost and use a separately scoped key with a protected deployment before making the gateway reachable outside your computer.
+
+The gateway uses model aliases and environment-backed secrets, with one retry, a request timeout, and a cooldown after repeated failures. Routing is explicit: switching aliases does not silently switch providers or add cost. LiteLLM recommends simple-shuffle routing for multiple deployments under one alias; use that if you later add equivalent backups. Tool calling still depends on provider/model compatibility. See LiteLLM's [routing documentation](https://docs.litellm.ai/docs/routing) and [provider list](https://docs.litellm.ai/docs/providers).
 
 Browser speech recognition depends on the browser and may send audio to its speech service. Chat messages are sent to the configured model provider. Use invented data until privacy, retention, security, and deletion requirements are addressed.
 
@@ -45,10 +70,10 @@ Browser speech recognition depends on the browser and may send audio to its spee
 The live audio path uses [Pipecat](https://github.com/pipecat-ai/pipecat), following the project’s [Exotel inbound example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot/inbound), [Sarvam voice example](https://github.com/pipecat-ai/pipecat/blob/main/examples/voice/voice-sarvam.py), and [MCP client integration](https://docs.pipecat.ai/api-reference/server/utilities/mcp/mcp). Install the optional voice dependencies:
 
 ```bash
-pip install -e '.[voice]'
+pip install -e '.[gateway,voice]'
 ```
 
-Configure `OPENAI_API_KEY` and `SARVAM_API_KEY`. Sarvam is the India-first default for speech input and output. Change `SARVAM_TTS_LANGUAGE` for the deployment's main spoken language. [Kokoro 82M](https://github.com/hexgrad/kokoro) is a local Hindi-capable TTS alternative; Pipecat's [Kokoro adapter](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) runs it locally, but Kokoro only speaks and still needs a separate speech recognizer. To add it, install `pip install -e '.[voice,voice-kokoro]'` using Python 3.11–3.13, then set `VOICE_TTS_PROVIDER=kokoro`. This environment uses Python 3.14, which cannot currently resolve Kokoro's optional package. [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) can be evaluated later behind the TTS boundary, but its official release currently lists ten languages without Hindi.
+Configure the selected `LLM_MODEL` alias as above, keep the gateway running, and set `SARVAM_API_KEY`. Sarvam is the India-first default for speech input and output. Change `SARVAM_TTS_LANGUAGE` for the deployment's main spoken language. The voice runner uses the same LiteLLM gateway; check the provider/model's tool-calling support. [Kokoro 82M](https://github.com/hexgrad/kokoro) is a local Hindi-capable TTS alternative; Pipecat's [Kokoro adapter](https://docs.pipecat.ai/api-reference/server/services/tts/kokoro) runs it locally, but Kokoro only speaks and still needs a separate speech recognizer. To add it, install `pip install -e '.[gateway,voice,voice-kokoro]'` using Python 3.11–3.13, then set `VOICE_TTS_PROVIDER=kokoro`. This environment uses Python 3.14, which cannot currently resolve Kokoro's optional package. [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) can be evaluated later behind the TTS boundary, but its official release currently lists ten languages without Hindi.
 
 Start the Pipecat runner with:
 
@@ -64,6 +89,8 @@ Connect the Exotel call stream to the Pipecat server using [Exotel's AgentStream
 flowchart LR
   C[Caller or web visitor] --> CH[Web / terminal / Pipecat voice]
   CH --> A[Receptionist agent]
+  A --> G[LiteLLM Proxy gateway]
+  G --> L[OpenAI / Gemini / OpenRouter / Groq / Ollama]
   A --> BI[Business facts MCP]
   A --> RI[Caller request MCP]
   BI --> P[Owner-managed business profile]
@@ -82,6 +109,7 @@ Pipecat is the real-time voice pipeline and transport layer; it is not the speec
 - [Pipecat](https://github.com/pipecat-ai/pipecat) and its [Exotel inbound example](https://github.com/pipecat-ai/pipecat-examples/tree/main/exotel-chatbot/inbound) for live audio pipelines and telephony transport.
 - [Pipecat MCP client](https://docs.pipecat.ai/api-reference/server/utilities/mcp/mcp) and the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) for tool boundaries.
 - [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) for the text/terminal prototype and approval flow.
+- [LiteLLM Proxy](https://github.com/BerriAI/litellm) model aliases, env-backed provider credentials, and routing configuration for one OpenAI-compatible gateway endpoint.
 
 These projects inform the design; this repository does not copy their source. Keep tools narrow: business facts are read-only, while the only write in the current receptionist is a request for human review.
 

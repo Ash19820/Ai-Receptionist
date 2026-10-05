@@ -5,9 +5,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from margin_guard.db import initialize
 from margin_guard.mcp.request_inbox import create_caller_request, get_open_requests
+from margin_guard.llm_provider import get_llm_config
 from margin_guard.receptionist_profile import find_faqs, load_profile
 
 
@@ -89,6 +91,37 @@ class ReceptionistTests(unittest.TestCase):
                 summary="Please call back",
                 caller_confirmed=False,
             )
+
+    def test_provider_configuration_selects_provider_key_model_and_endpoint(self) -> None:
+        cases = [
+            ("openai", "OPENAI_API_KEY", "gpt-4.1-mini", None),
+        ]
+        for provider, key_name, model, base_url in cases:
+            with self.subTest(provider=provider), patch.dict(
+                os.environ,
+                {"LLM_PROVIDER": provider, key_name: "test-key"},
+                clear=True,
+            ):
+                config = get_llm_config()
+                self.assertEqual(config.provider, provider)
+                self.assertEqual(config.model, model)
+                self.assertEqual(config.base_url, base_url)
+
+    def test_litellm_gateway_uses_gateway_key_url_and_model_alias(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "litellm-gateway", "LLM_API_KEY": "gateway-key"},
+            clear=True,
+        ):
+            config = get_llm_config()
+            self.assertEqual(config.model, "receptionist-openai")
+            self.assertEqual(config.base_url, "http://localhost:4000/v1")
+            self.assertEqual(config.api_key, "gateway-key")
+
+    def test_selected_provider_requires_its_api_key(self) -> None:
+        with patch.dict(os.environ, {"LLM_PROVIDER": "openai"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
+                get_llm_config()
 
 
 if __name__ == "__main__":

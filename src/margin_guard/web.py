@@ -16,6 +16,7 @@ from agents import Runner
 
 from margin_guard.agent import agent_session
 from margin_guard.db import initialize
+from margin_guard.llm_provider import get_llm_config
 
 
 STATIC = Path(__file__).parent / "static"
@@ -101,8 +102,10 @@ def main() -> None:
     import uvicorn
 
     load_dotenv()
-    if not os.getenv("OPENAI_API_KEY"):
-        raise SystemExit("Set OPENAI_API_KEY in .env before starting the AI receptionist.")
+    try:
+        get_llm_config()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     uvicorn.run("margin_guard.web:app", host="127.0.0.1", port=8000, reload=False)
 
 

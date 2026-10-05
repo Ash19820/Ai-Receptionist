@@ -24,6 +24,8 @@ from pipecat.transports.base_transport import BaseTransport
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.workers.runner import WorkerRunner
 
+from margin_guard.llm_provider import get_llm_config
+
 
 SYSTEM_INSTRUCTIONS = """You are a concise, friendly receptionist for one small business.
 Use the verified profile and FAQ tools for business facts. Never invent prices,
@@ -91,11 +93,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     sarvam_key = os.getenv("SARVAM_API_KEY")
     if not sarvam_key:
         raise RuntimeError("Set SARVAM_API_KEY to use the configured Indian-language speech recognizer.")
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("Set OPENAI_API_KEY for the receptionist language model.")
+    llm_config = get_llm_config()
 
     db_file = os.path.abspath(os.path.expanduser(os.getenv("RECEPTIONIST_DB", "./data/receptionist.sqlite3")))
-    child_env = {**os.environ, "RECEPTIONIST_DB": db_file}
+    # Tool servers receive only the business data paths, never provider/gateway keys.
+    child_env = {
+        "RECEPTIONIST_DB": db_file,
+        "BUSINESS_PROFILE": os.environ.get("BUSINESS_PROFILE", "./business-profile.json"),
+    }
 
     def server_params(module: str) -> StdioServerParameters:
         return StdioServerParameters(
@@ -125,10 +130,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             ),
         )
         tts = _speech_output()
+        llm_base_url = llm_config.base_url
+        if llm_config.provider == "ollama" and llm_base_url:
+            llm_base_url = llm_base_url.rstrip("/")
+            if not llm_base_url.endswith("/v1"):
+                llm_base_url += "/v1"
         llm = OpenAILLMService(
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=llm_config.api_key,
+            base_url=llm_base_url,
             settings=OpenAILLMService.Settings(
-                model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+                model=llm_config.model,
                 system_instruction=SYSTEM_INSTRUCTIONS,
             ),
         )
@@ -186,8 +197,10 @@ async def bot(runner_args: RunnerArguments) -> None:
 
 
 def main() -> None:
+    from dotenv import load_dotenv
     from pipecat.runner.run import main as runner_main
 
+    load_dotenv()
     runner_main()
 
 

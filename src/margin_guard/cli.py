@@ -5,6 +5,7 @@ import os
 
 from margin_guard.agent import agent_session, run_agent_turn
 from margin_guard.db import db_path, initialize
+from margin_guard.llm_provider import get_llm_config
 
 
 def load_dotenv() -> None:
@@ -39,8 +40,10 @@ async def chat_loop() -> None:
 
 def main() -> None:
     load_dotenv()
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Set OPENAI_API_KEY in your environment or .env file, then start the AI receptionist again.")
+    try:
+        get_llm_config()
+    except ValueError as exc:
+        print(exc)
         raise SystemExit(2)
     initialize()
     try:

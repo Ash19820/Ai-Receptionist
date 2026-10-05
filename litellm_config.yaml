@@ -1,0 +1,38 @@
+# Local LiteLLM Proxy configuration. Provider secrets are read from environment
+# variables; never put real keys in this file.
+model_list:
+  - model_name: receptionist-openai
+    litellm_params:
+      model: openai/gpt-4.1-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: receptionist-gemini
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: receptionist-openrouter
+    litellm_params:
+      model: openrouter/google/gemini-2.5-flash
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: receptionist-groq
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: receptionist-ollama
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b
+      api_base: os.environ/OLLAMA_BASE_URL
+      api_key: ollama
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 1
+  timeout: 45
+  allowed_fails: 3
+  retry_after: 30

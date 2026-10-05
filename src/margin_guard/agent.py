@@ -9,6 +9,7 @@ from typing import AsyncIterator
 from agents import Agent, Runner
 from agents.mcp import MCPServerStdio
 
+from margin_guard.llm_provider import make_agent_model
 
 READ_ONLY = {
     "get_business_profile",
@@ -24,7 +25,7 @@ WRITE_TOOLS = {
 def make_agent(business_info_server: MCPServerStdio, request_inbox_server: MCPServerStdio) -> Agent:
     return Agent(
         name="Common AI Receptionist",
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        model=make_agent_model(),
         instructions=(
             "You are a configurable, multilingual AI receptionist for a small business. The verified "
             "business profile, services, hours, service area, and FAQs are available through tools. "
@@ -53,7 +54,11 @@ def approval_policy() -> dict:
 @asynccontextmanager
 async def agent_session(*, include_open_requests: bool = False) -> AsyncIterator[Agent]:
     db_file = str(Path(os.environ.get("RECEPTIONIST_DB", "./data/receptionist.sqlite3")).expanduser().resolve())
-    env = {**os.environ, "RECEPTIONIST_DB": db_file}
+    # MCP child servers only need business data paths; do not forward model/API secrets.
+    env = {
+        "RECEPTIONIST_DB": db_file,
+        "BUSINESS_PROFILE": os.environ.get("BUSINESS_PROFILE", "./business-profile.json"),
+    }
     common = {"command": sys.executable, "env": env}
     async with (
         MCPServerStdio(
