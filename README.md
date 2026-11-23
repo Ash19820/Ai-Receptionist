@@ -13,10 +13,12 @@ Now: browser diagnostics -> FastAPI media adapter -> explicit provider path
   Local: interim/final Whisper -> FAQ or Qwen -> Kokoro -> browser audio
   Gemini: PCM relay -> Gemini Live speech-to-speech -> browser audio
 
-Current scope: browser diagnostics -> FastAPI media adapter -> explicit local or Gemini Live path. Phone/SIP transport is planned separately.
+Production target: phone/SIP or browser/WebRTC -> LiveKit room/session
+  -> project-owned receptionist policy + business profile + safe tools
+  -> explicit replaceable voice provider
 ```
 
-The current app remains a diagnostics and development surface. Its local and Gemini providers are explicit and replaceable; phone-call transport will be evaluated as a later step.
+The production runtime decision and migration boundaries are recorded in [`docs/decisions/0002-production-voice-runtime.md`](docs/decisions/0002-production-voice-runtime.md). LiveKit Agents is the selected target for session lifecycle and SIP/WebRTC transport; Pipecat remains an alternative if a measured pipeline/transport need outweighs the cost of changing frameworks. The current app stays the diagnostics console until its voice behavior is measured and LiveKit server credentials are available.
 
 The browser mode is the recommended way to run inside Codex: it uses the computer's microphone and speakers, while the Python backend listens only on `127.0.0.1`. The browser uses echo cancellation and a local speech gate to avoid reacting to brief acknowledgements. In Gemini mode, Gemini's automatic speech detection remains enabled as a fallback for room noise; when the browser detects a completed turn, it signals Gemini to finalize promptly. The user can barge in to stop queued audio.
 
@@ -93,9 +95,23 @@ cp .env.example .env
 
 Gemini Live model access, availability, quotas, terms, and free-tier eligibility can change. This route is for synthetic evaluation only; it does not yet use verified business profiles or deterministic receptionist actions.
 
-### Phone calls (planned)
+### Experimental LiveKit runtime
 
-This prototype currently handles browser voice diagnostics. Phone/SIP connectivity will be introduced as a separate, reviewable production-runtime change.
+The first LiveKit agent path is optional and runs beside the current diagnostics server. It uses LiveKit Agents for the room/session and Gemini Live for speech; the existing local and direct-Gemini paths remain available. The receptionist policy, approved profile facts, and callback workflow still belong to this project.
+
+Install the optional integration:
+
+```bash
+uv pip install -e '.[livekit]'
+```
+
+This path needs a LiveKit Cloud project and the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/) for the first browser test. Put its WebSocket URL, API key, and API secret in the ignored `.env` file as `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`. Reuse `GEMINI_API_KEY`; do not paste keys into chat or commit them. Start the worker from the project folder:
+
+```bash
+lk agent dev src/ai_receptionist/livekit_agent.py
+```
+
+The CLI prints an Agent Console link for a browser session. The new path sends live audio through LiveKit and to Google Gemini. This code does not start an audio recording; review the LiveKit project's storage/observability settings and both services' data terms before using anything beyond synthetic test details. The browser diagnostics route remains the existing direct-Gemini comparison; its UI has not been migrated to LiveKit yet.
 
 ### Add approved business details
 

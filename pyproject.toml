@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gemini = ["google-genai>=3.2,<4"]
+livekit = ["livekit-agents[google]>=1.8.5,<2"]
 
 [project.scripts]
 ai-receptionist = "ai_receptionist.main:main"
