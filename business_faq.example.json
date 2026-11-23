@@ -1,0 +1,17 @@
+[
+  {
+    "questions": [
+      "What time do you open?",
+      "What are your business hours?",
+      "Are you open today?"
+    ],
+    "answer": "Replace this with your real opening hours."
+  },
+  {
+    "questions": [
+      "Where are you located?",
+      "What is your address?"
+    ],
+    "answer": "Replace this with your real business address."
+  }
+]

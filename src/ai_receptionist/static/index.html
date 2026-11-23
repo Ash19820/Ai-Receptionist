@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Local AI Receptionist</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, sans-serif; color: #17202a; background: #f3f6f8; }
+    body { max-width: 680px; margin: 8vh auto; padding: 0 20px; }
+    main { padding: 28px; border-radius: 18px; background: white; box-shadow: 0 12px 40px #182a3b18; }
+    h1 { margin: 0 0 4px; font-size: 1.65rem; }
+    .sub { color: #52616b; margin: 0 0 24px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; }
+    button { border: 0; border-radius: 10px; padding: 12px 18px; font: inherit; font-weight: 650; cursor: pointer; }
+    button:disabled { opacity: .48; cursor: default; }
+    #speak { color: white; background: #1267d6; }
+    #stop { background: #e7edf2; color: #17202a; }
+    #status { min-height: 1.5em; margin: 18px 0; color: #1267d6; }
+    .turn { padding: 14px 0; border-top: 1px solid #e5eaee; }
+    .label { display: block; color: #5e6a71; font-size: .88rem; }
+    .text { min-height: 1.5em; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .privacy { color: #66747c; font-size: .88rem; margin-top: 22px; }
+    @media (prefers-color-scheme: dark) {
+      :root { color: #e8eef2; background: #101820; }
+      main { background: #1b2731; box-shadow: 0 12px 40px #0005; }
+      .sub, .label, .privacy { color: #adbdc8; }
+      .turn { border-color: #34434f; }
+      #stop { background: #34434f; color: #e8eef2; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Local AI Receptionist</h1>
+    <p class="sub">English voice assistant · runs on this computer</p>
+    <div class="controls">
+      <button id="speak">Start conversation</button>
+      <button id="stop" disabled>Stop listening</button>
+    </div>
+    <p id="status" role="status" aria-live="polite">Ready. Start a conversation and allow microphone access.</p>
+    <section class="turn" aria-live="polite">
+      <span class="label">Live transcription</span><div class="text" id="transcript">—</div>
+    </section>
+    <section class="turn" aria-live="polite">
+      <span class="label">Assistant</span><div class="text" id="answer">—</div>
+    </section>
+    <p class="privacy">Audio is processed by local models on this computer. The microphone stays active during the session so you can interrupt the assistant.</p>
+  </main>
+  <script>
+    const speakButton = document.querySelector('#speak');
+    const stopButton = document.querySelector('#stop');
+    const statusEl = document.querySelector('#status');
+    const transcriptEl = document.querySelector('#transcript');
+    const answerEl = document.querySelector('#answer');
+    const TARGET_RATE = 16000;
+    let ws, stream, audioContext, analyser, micNode, silentGain;
+    let speaking = false, botSpeaking = false, serverWorkPending = false;
+    let silenceMs = 0, loudFrames = 0, lastMonitorAt = 0;
+    let monitorFrame = 0, maxTurnTimer = 0;
+    let preRoll = [], audioSources = new Set(), scheduledUntil = 0, playbackChain = Promise.resolve();
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function sendEvent(type) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type }));
+    }
+
+    function stopPlayback() {
+      for (const source of audioSources) {
+        try { source.stop(); } catch (_) { /* already ended */ }
+      }
+      audioSources.clear();
+      scheduledUntil = audioContext?.currentTime || 0;
+      playbackChain = Promise.resolve();
+      botSpeaking = false;
+    }
+
+    function decodeAndPlay(base64, sampleRate) {
+      playbackChain = playbackChain.then(() => {
+        if (!audioContext || !base64) return;
+        const raw = atob(base64);
+        const pcm = new Float32Array(raw.length / 4);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const view = new DataView(bytes.buffer);
+        for (let i = 0; i < pcm.length; i++) pcm[i] = view.getFloat32(i * 4, true);
+        const buffer = audioContext.createBuffer(1, pcm.length, sampleRate);
+        buffer.copyToChannel(pcm, 0);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        audioSources.add(source);
+        source.onended = () => {
+          audioSources.delete(source);
+          if (audioSources.size === 0 && !speaking) botSpeaking = false;
+        };
+        scheduledUntil = Math.max(scheduledUntil, audioContext.currentTime + 0.025);
+        source.start(scheduledUntil);
+        scheduledUntil += buffer.duration;
+        botSpeaking = true;
+      }).catch(error => setStatus(`Audio playback error: ${error.message}`));
+    }
+
+    async function handleEvent(event) {
+      switch (event.type) {
+        case 'ready': setStatus('Listening · speak naturally, and interrupt me whenever you want.'); break;
+        case 'listening':
+          transcriptEl.textContent = '';
+          answerEl.textContent = '';
+          break;
+        case 'partial_transcript': transcriptEl.textContent = event.text; break;
+        case 'transcript': transcriptEl.textContent = event.text; break;
+        case 'faq_ready': setStatus('Found a saved answer while you were speaking…'); break;
+        case 'processing':
+          serverWorkPending = true;
+          setStatus('Checking the answer…');
+          break;
+        case 'answer':
+          serverWorkPending = true;
+          answerEl.textContent = event.text;
+          break;
+        case 'audio_chunk': decodeAndPlay(event.audio_base64, event.sample_rate); break;
+        case 'assistant_done': {
+          serverWorkPending = false;
+          const timing = event.timings || {};
+          const firstAudio = timing.end_to_first_audio_seconds;
+          const text = firstAudio == null
+            ? 'Reply ready.'
+            : `First audio ${(firstAudio).toFixed(2)}s after your turn · ${event.source === 'faq' ? 'saved FAQ' : 'AI reply'}`;
+          setStatus(text);
+          break;
+        }
+        case 'interrupted':
+          serverWorkPending = false;
+          setStatus('Interrupted · go ahead.');
+          break;
+        case 'speculative_ready': setStatus('I have a draft reply ready; finish your thought.'); break;
+        case 'turn_limit':
+          speaking = false;
+          sendEvent('turn_end');
+          setStatus('That was a long turn; finishing this part now.');
+          break;
+        case 'error':
+          serverWorkPending = false;
+          setStatus(event.message);
+          break;
+      }
+    }
+
+    function startTurn() {
+      if (speaking) return;
+      speaking = true;
+      silenceMs = 0;
+      loudFrames = 0;
+      sendEvent('speech_start');
+      for (const frame of preRoll) ws.send(frame);
+      preRoll = [];
+      maxTurnTimer = setTimeout(endTurn, 25_000);
+    }
+
+    function endTurn() {
+      if (!speaking) return;
+      speaking = false;
+      clearTimeout(maxTurnTimer);
+      sendEvent('turn_end');
+      setStatus('Thinking while I finish preparing the reply…');
+    }
+
+    function monitorMic() {
+      if (!analyser) return;
+      const now = performance.now();
+      const elapsedMs = lastMonitorAt ? now - lastMonitorAt : 16;
+      lastMonitorAt = now;
+      const samples = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) sum += sample * sample;
+      const rms = Math.sqrt(sum / samples.length);
+      const speechThreshold = botSpeaking || serverWorkPending ? 0.045 : 0.022;
+      if (rms >= speechThreshold) {
+        loudFrames++;
+        silenceMs = 0;
+        if (!speaking && loudFrames >= 3) {
+          if (botSpeaking || serverWorkPending) {
+            stopPlayback();
+            sendEvent('interrupt');
+            serverWorkPending = false;
+          }
+          startTurn();
+        }
+      } else {
+        loudFrames = 0;
+        if (speaking) {
+          silenceMs += elapsedMs;
+          if (silenceMs >= 850) endTurn();
+        }
+      }
+      monitorFrame = requestAnimationFrame(monitorMic);
+    }
+
+    async function beginSession() {
+      try {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${location.host}/api/stream`);
+        ws.binaryType = 'arraybuffer';
+        ws.onmessage = message => {
+          if (typeof message.data !== 'string') return;
+          try { handleEvent(JSON.parse(message.data)); }
+          catch (error) { setStatus(`Assistant event error: ${error.message}`); }
+        };
+        await new Promise((resolve, reject) => {
+          ws.onopen = resolve;
+          ws.onerror = () => reject(new Error('Could not connect to the local assistant.'));
+        });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        audioContext = new AudioContext();
+        lastMonitorAt = 0;
+        await audioContext.audioWorklet.addModule('/static/mic-processor.js');
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        micNode = new AudioWorkletNode(audioContext, 'pcm-capture', { processorOptions: { targetRate: TARGET_RATE } });
+        silentGain = audioContext.createGain();
+        silentGain.gain.value = 0;
+        source.connect(micNode);
+        micNode.connect(silentGain);
+        silentGain.connect(audioContext.destination);
+        micNode.port.onmessage = message => {
+          if (!(message.data instanceof ArrayBuffer) || ws?.readyState !== WebSocket.OPEN) return;
+          if (speaking) ws.send(message.data);
+          else {
+            preRoll.push(message.data);
+            if (preRoll.length > 10) preRoll.shift();
+          }
+        };
+        speakButton.disabled = true;
+        stopButton.disabled = false;
+        speakButton.textContent = 'Listening…';
+        setStatus('Listening · speak naturally, and interrupt me whenever you want.');
+        monitorMic();
+      } catch (error) {
+        const message = `Could not start microphone: ${error.message}`;
+        await stopSession();
+        setStatus(message);
+      }
+    }
+
+    async function stopSession() {
+      cancelAnimationFrame(monitorFrame);
+      clearTimeout(maxTurnTimer);
+      stopPlayback();
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+        ws.close();
+      }
+      if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+      if (audioContext) { await audioContext.close(); audioContext = null; }
+      ws = null;
+      analyser = null;
+      speaking = false;
+      botSpeaking = false;
+      speakButton.disabled = false;
+      stopButton.disabled = true;
+      speakButton.textContent = 'Start conversation';
+      setStatus('Stopped. Select Start conversation when you are ready.');
+    }
+
+    speakButton.addEventListener('click', beginSession);
+    stopButton.addEventListener('click', stopSession);
+  </script>
+</body>
+</html>

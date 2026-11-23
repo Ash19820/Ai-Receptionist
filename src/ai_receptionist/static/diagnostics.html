@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Voice Assistant Checks</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, sans-serif; color: #17202a; background: #f3f6f8; }
+    body { max-width: 900px; margin: 5vh auto; padding: 0 20px; }
+    main { padding: 28px; border-radius: 18px; background: white; box-shadow: 0 12px 40px #182a3b18; }
+    h1 { margin: 0; font-size: 1.7rem; }
+    h2 { margin: 0 0 5px; font-size: 1.08rem; }
+    p { margin-top: 0; }
+    .intro, .muted, .check p, .note { color: #52616b; }
+    .intro { margin: 6px 0 22px; }
+    .call { padding: 20px; border: 1px solid #d8e2e9; border-radius: 16px; background: #f9fbfc; }
+    .call-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; align-items: start; }
+    .call-head p { margin-bottom: 12px; }
+    .call-states { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 99px; background: #e7edf2; font-size: .88rem; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #81909a; }
+    .pill[data-state="ok"] .dot { background: #16814f; }
+    .pill[data-state="wait"] .dot { background: #d08a00; }
+    .pill[data-state="error"] .dot { background: #c5362c; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
+    button, a.button { display: inline-block; border: 0; border-radius: 9px; padding: 10px 14px; background: #1267d6; color: white; font: inherit; font-weight: 650; text-decoration: none; cursor: pointer; }
+    button.secondary, a.secondary { background: #e7edf2; color: #17202a; }
+    button:disabled { opacity: .5; cursor: default; }
+    .tuning { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #52616b; font-size: .9rem; }
+    .tuning input { width: 135px; }
+    .meter { height: 8px; margin: 12px 0 4px; overflow: hidden; border-radius: 99px; background: #e7edf2; }
+    .meter span { display: block; width: 0; height: 100%; background: #25a36f; transition: width .08s linear; }
+    .meter-caption { margin: 0 0 14px; color: #52616b; font-size: .82rem; }
+    .live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .result { padding: 12px; border: 1px solid #e0e7ec; border-radius: 12px; background: white; }
+    .result strong { display: block; color: #52616b; font-size: .84rem; font-weight: 600; }
+    .result span { display: block; min-height: 1.5em; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .timings { margin: 12px 0 0; min-height: 1.4em; color: #52616b; font-size: .9rem; }
+    .history { margin-top: 20px; }
+    .history h2 { margin-bottom: 8px; }
+    .turn-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+    .turn-list li { padding: 11px 13px; border: 1px solid #e0e7ec; border-radius: 11px; }
+    .turn-list p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .turn-list small { color: #52616b; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 18px; }
+    .check { padding: 16px; border: 1px solid #e0e7ec; border-radius: 14px; }
+    .check h2 { margin-bottom: 5px; }
+    .check p { margin-bottom: 12px; font-size: .92rem; }
+    .status { min-height: 1.5em; margin: 9px 0 0 !important; font-size: .9rem !important; }
+    .status[data-state="ok"] { color: #137343; }
+    .status[data-state="error"] { color: #b42318; }
+    .status[data-state="wait"] { color: #805b00; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .note { margin: 18px 0 0; font-size: .88rem; }
+    @media (prefers-color-scheme: dark) {
+      :root { color: #e8eef2; background: #101820; }
+      main { background: #1b2731; box-shadow: 0 12px 40px #0005; }
+      .intro, .muted, .check p, .note, .tuning, .meter-caption, .timings, .turn-list small { color: #adbdc8; }
+      .call { background: #202e39; border-color: #34434f; }
+      .check, .result, .turn-list li { border-color: #34434f; }
+      .result, .turn-list li { background: #1b2731; }
+      .result strong { color: #adbdc8; }
+      .pill, button.secondary, a.secondary { background: #34434f; color: #e8eef2; }
+      .meter { background: #34434f; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Voice Assistant Checks</h1>
+    <p class="intro">Gemini Live is selected for this evaluation. Local voice remains available in the engine menu. Speak normally and pause when you finish.</p>
+
+    <section class="call" aria-labelledby="call-title">
+      <div class="call-head">
+        <div>
+          <h2 id="call-title">Call-style conversation</h2>
+          <p class="muted">One tap to start. Pause when you finish a thought and the assistant will take its turn. You can interrupt while it is speaking.</p>
+        </div>
+        <div class="call-states" aria-label="Conversation status">
+          <span class="pill" id="mic-state" data-state=""><span class="dot"></span><span id="mic-state-text">Microphone off</span></span>
+          <span class="pill" id="speech-state" data-state="quiet"><span class="dot"></span><span id="speech-state-text">Speech detection off</span></span>
+          <span class="pill" id="call-state" data-state=""><span class="dot"></span><span id="call-state-text">Ready</span></span>
+        </div>
+      </div>
+      <div class="controls">
+        <label for="voice-provider">Voice engine
+          <select id="voice-provider">
+            <option value="local">Local · private</option>
+            <option value="gemini" selected>Gemini Live · sends audio to Google</option>
+          </select>
+        </label>
+        <button id="call-start">Start conversation</button>
+        <button class="secondary" id="call-stop" disabled>End conversation</button>
+        <label class="tuning" for="silence-wait">Wait after I stop speaking
+          <input id="silence-wait" type="range" min="500" max="1500" step="50" value="500">
+          <span id="silence-value">0.50 s</span>
+        </label>
+      </div>
+      <p class="meter-caption">Shorter wait means quicker replies; raise it if the assistant cuts off your pauses. After an interruption, it waits up to 0.40 s of silence before replying. The timing line estimates when the browser starts the first audio.</p>
+      <p class="note" id="cloud-notice" hidden>Gemini mode sends microphone audio and any configured business profile facts to Google for live processing. Google says content sent through its free tier may be used to improve its products. Check your account terms before speaking. Local mode keeps audio on this computer. You start and stop microphone access yourself.</p>
+      <div class="meter" role="meter" aria-label="Microphone speech activity" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="call-level"></span></div>
+      <p class="meter-caption" id="mic-explanation">Microphone is off. Starting a conversation turns it on; detected speech is sent to the chosen voice engine.</p>
+      <p class="meter-caption" id="mic-level-readout" aria-live="off">Input level 0/100 · speech trigger 3/100</p>
+      <div class="live-grid" aria-live="polite">
+        <div class="result"><strong>What I heard</strong><span id="live-transcript">—</span></div>
+        <div class="result"><strong>Assistant</strong><span id="live-answer">—</span></div>
+      </div>
+      <p class="timings" id="call-timing" role="status" aria-live="polite">Turn timings will appear here after the first reply.</p>
+      <div class="history">
+        <h2>Conversation turns</h2>
+        <ol class="turn-list" id="turn-history"></ol>
+      </div>
+    </section>
+
+    <section class="check" aria-labelledby="callback-inbox-title" style="margin-top:18px">
+      <h2 id="callback-inbox-title">Callback message inbox · stored on this computer</h2>
+      <p>Gemini will ask before collecting details, read the message back, and save it only after a clear final “yes.” Messages expire after the configured retention period.</p>
+      <div class="controls">
+        <button class="secondary" id="callback-inbox-refresh">Refresh inbox</button>
+        <p class="status" id="callback-inbox-status" role="status" aria-live="polite">No messages loaded.</p>
+      </div>
+      <ol class="turn-list" id="callback-inbox-list"></ol>
+    </section>
+
+    <div class="grid">
+      <section class="check">
+        <h2>Browser support</h2>
+        <p>Checks browser microphone, audio, and WebSocket support.</p>
+        <button id="check-browser">Check browser</button>
+        <p class="status" id="browser-status" role="status" aria-live="polite">Not checked yet.</p>
+      </section>
+      <section class="check">
+        <h2>Speaker</h2>
+        <p>Play a short tone. Turn your volume down first if needed.</p>
+        <button id="speaker-test">Play test tone</button>
+        <p class="status" id="speaker-status" role="status" aria-live="polite">Not checked yet.</p>
+      </section>
+      <section class="check">
+        <h2>Assistant service</h2>
+        <p>Checks whether the local assistant service is responding.</p>
+        <button id="backend-test">Check assistant</button>
+        <p class="status" id="backend-status" role="status" aria-live="polite">Not checked yet.</p>
+      </section>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="http://127.0.0.1:8765/" target="_blank" rel="noreferrer">Open assistant</a>
+    </div>
+    <p class="note">When the local Smart Turn model is available, it checks whether a pause sounds like the end of a thought. The wait slider is a safety fallback and can end a turn if the model is unavailable. The timing shown is from the local service and does not measure the time sound takes to reach your speaker. No recording file is created.</p>
+  </main>
+  <script>
+    const byId = id => document.getElementById(id);
+    function status(id, message, state = "") {
+      const element = byId(id);
+      element.textContent = message;
+      element.dataset.state = state;
+    }
+    function callStatus(message, state = "") {
+      byId("call-state-text").textContent = message;
+      byId("call-state").dataset.state = state;
+    }
+    let lastMicStatus = "";
+    function micStatus(message, state = "") {
+      const micOn = Boolean(stream?.getAudioTracks().some(track => track.readyState === "live" && track.enabled));
+      const speechText = !micOn
+        ? "Speech detection off"
+        : speaking
+        ? "Speech detected · sending"
+        : capturingCandidate && serverWorkPending
+        ? "Sound detected · reply still pending"
+        : capturingCandidate
+        ? "Checking for speech"
+        : botSpeaking
+        ? "No speech detected · watching for interruption"
+        : serverWorkPending
+        ? "No speech detected · waiting for reply"
+        : "No speech detected · ready for you";
+      const micText = micOn ? "Microphone on" : "Microphone off";
+      const key = `${micText}:${speechText}:${state}`;
+      if (key === lastMicStatus) return;
+      lastMicStatus = key;
+      byId("mic-state-text").textContent = micText;
+      byId("mic-state").dataset.state = micOn ? "ok" : state === "error" ? "error" : "";
+      byId("speech-state-text").textContent = speechText;
+      byId("speech-state").dataset.state = speaking ? "ok" : capturingCandidate ? "wait" : "quiet";
+      byId("mic-explanation").textContent = !stream
+        ? "Microphone is off. Starting a conversation turns it on; detected speech is sent to the chosen voice engine."
+        : speaking
+        ? "Your speech is being sent to the selected voice engine. Quiet audio stays on this device."
+        : "Microphone is on and checked locally for speech. Quiet audio stays on this device; speech is sent only after detection.";
+    }
+
+    byId("check-browser").addEventListener("click", () => {
+      const missing = [];
+      if (!navigator.mediaDevices?.getUserMedia) missing.push("microphone access");
+      if (!(window.AudioContext || window.webkitAudioContext)) missing.push("Web Audio");
+      if (!window.WebSocket) missing.push("WebSocket");
+      status("browser-status", missing.length ? `Unavailable: ${missing.join(", ")}.` : "Browser audio and WebSocket features are available.", missing.length ? "error" : "ok");
+    });
+    byId("check-browser").click();
+
+    byId("silence-wait").addEventListener("input", event => {
+      byId("silence-value").textContent = `${(Number(event.target.value) / 1000).toFixed(2)} s`;
+      updateAudioDiagnostics();
+    });
+
+    byId("speaker-test").addEventListener("click", async () => {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const context = new AudioContextClass();
+        await context.resume();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.frequency.value = 440;
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.03);
+        gain.gain.setTargetAtTime(0.0001, context.currentTime + 0.35, 0.04);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.6);
+        oscillator.onended = async () => {
+          status("speaker-status", "Test tone played. Did you hear it?", "ok");
+          await context.close();
+        };
+        status("speaker-status", "Playing a short tone…", "wait");
+      } catch (error) {
+        status("speaker-status", `Could not play test tone: ${error.message}`, "error");
+      }
+    });
+
+    byId("backend-test").addEventListener("click", () => {
+      const button = byId("backend-test");
+      button.disabled = true;
+      status("backend-status", "Connecting to the local assistant…", "wait");
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${location.host}/api/stream`);
+      let finished = false;
+      const timer = setTimeout(() => finish(false, "No response from the assistant service."), 4000);
+      function finish(ok, message) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        try { socket.close(); } catch (_) {}
+        button.disabled = false;
+        status("backend-status", message, ok ? "ok" : "error");
+      }
+      socket.onmessage = event => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "ready") {
+            const detector = data.smart_turn_available ? "Smart Turn is loaded" : "silence fallback is active";
+            finish(true, `Assistant service is responding; ${detector}. Model readiness is confirmed when a reply completes.`);
+          }
+        } catch (_) { /* Ignore non-JSON messages. */ }
+      };
+      socket.onerror = () => finish(false, "Could not connect. Start the local assistant service first.");
+      socket.onclose = () => { if (!finished) finish(false, "Assistant connection closed before it was ready."); };
+    });
+
+    const TARGET_RATE = 16000;
+    const MAX_CANDIDATE_FRAMES = 250;
+    let ws, stream, audioContext, analyser, micNode, silentGain, activeProvider = null;
+    let sessionGeneration = 0;
+    let speaking = false, botSpeaking = false, serverWorkPending = false;
+    let silenceMs = 0, interruptCandidateMs = 0, candidateQuietMs = 0, lastMonitorAt = 0;
+    let capturingCandidate = false, candidateAudio = [], bargeInTurn = false;
+    let monitorFrame = 0, maxTurnTimer = 0, replyWaitTimer = 0, lastLevelUiAt = 0;
+    let noiseFloorRms = 0.0015;
+    let turnCheckId = 0, pendingTurnCheck = false, nextTurnCheckAt = 0;
+    const EARLY_TURN_CHECK_MS = 250;
+    let preRoll = [], audioSources = new Set(), scheduledUntil = 0, playbackChain = Promise.resolve();
+    let currentTurn = null, completedTurns = 0;
+    let receivedAudioChunks = 0, scheduledAudioChunks = 0, finishedAudioChunks = 0;
+    let turnAudioTiming = "", playbackError = "";
+    let turnEndedAt = null, firstChunkDelayMs = null, firstPlaybackDelayMs = null;
+    let audioWaitTimer = 0;
+    let assistantResponseComplete = false;
+
+    function finishPlaybackIfDone() {
+      if (
+        assistantResponseComplete && !speaking && receivedAudioChunks > 0 &&
+        finishedAudioChunks >= receivedAudioChunks
+      ) {
+        botSpeaking = false;
+        callStatus("Listening for your next question…", "ok");
+        micStatus("Microphone on · listening locally", "ok");
+      }
+    }
+    const playbackLatencySamples = [];
+
+    function percentile(values, fraction) {
+      const sorted = [...values].sort((a, b) => a - b);
+      return sorted[Math.max(0, Math.ceil(fraction * sorted.length) - 1)];
+    }
+
+    function updateAudioDiagnostics() {
+      const counts = `Audio chunks: ${receivedAudioChunks} received · ${scheduledAudioChunks} queued · ${finishedAudioChunks} finished`;
+      const firstChunk = firstChunkDelayMs == null ? "first chunk pending" : `first chunk ${firstChunkDelayMs.toFixed(0)} ms`;
+      const playbackStart = firstPlaybackDelayMs == null ? "playback start pending" : `output start ~${firstPlaybackDelayMs.toFixed(0)} ms`;
+      const waitMs = Number(byId("silence-wait").value);
+      const samples = playbackLatencySamples.filter(sample => sample.waitMs === waitMs).map(sample => sample.delayMs);
+      const summary = samples.length >= 3
+        ? ` · ${waitMs} ms wait: ${samples.length} replies, playback estimate p50 ${percentile(samples, 0.5).toFixed(0)} ms / p95 ${percentile(samples, 0.95).toFixed(0)} ms`
+        : samples.length
+        ? ` · ${waitMs} ms wait: ${samples.length} measured ${samples.length === 1 ? "reply" : "replies"}`
+        : "";
+      byId("call-timing").textContent = `${turnAudioTiming || "Waiting for reply audio…"} · ${firstChunk} · ${playbackStart} · ${counts}${summary}${playbackError ? ` · Playback error: ${playbackError}` : ""}`;
+    }
+
+    function sendEvent(type) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type }));
+    }
+    function stopPlayback() {
+      for (const source of audioSources) {
+        try { source.stop(); } catch (_) { /* already ended */ }
+      }
+      audioSources.clear();
+      scheduledUntil = audioContext?.currentTime || 0;
+      playbackChain = Promise.resolve();
+      botSpeaking = false;
+    }
+    function decodeAndPlay(base64, sampleRate, format = "f32le") {
+      const playbackSession = sessionGeneration;
+      playbackChain = playbackChain.then(async () => {
+        if (playbackSession !== sessionGeneration || !audioContext || !base64) return;
+        if (audioContext.state !== "running") await audioContext.resume();
+        if (playbackSession !== sessionGeneration || !audioContext) return;
+        const raw = atob(base64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const view = new DataView(bytes.buffer);
+        let pcm;
+        if (format === "s16le") {
+          pcm = new Float32Array(Math.floor(bytes.length / 2));
+          for (let i = 0; i < pcm.length; i++) pcm[i] = view.getInt16(i * 2, true) / 32768;
+        } else {
+          pcm = new Float32Array(Math.floor(bytes.length / 4));
+          for (let i = 0; i < pcm.length; i++) pcm[i] = view.getFloat32(i * 4, true);
+        }
+        const buffer = audioContext.createBuffer(1, pcm.length, sampleRate);
+        buffer.copyToChannel(pcm, 0);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        audioSources.add(source);
+        source.onended = () => {
+          audioSources.delete(source);
+          if (playbackSession !== sessionGeneration) return;
+          finishedAudioChunks++;
+          updateAudioDiagnostics();
+          finishPlaybackIfDone();
+        };
+        // Start each new assistant reply from the current audio clock. A stale
+        // schedule from an earlier interrupted/closed turn must not leave the
+        // first chunk queued far in the future.
+        scheduledUntil = scheduledAudioChunks === 0
+          ? audioContext.currentTime + 0.025
+          : Math.max(scheduledUntil, audioContext.currentTime + 0.01);
+        if (scheduledAudioChunks === 0 && turnEndedAt != null) {
+          const estimatedOutputAt = performance.now() + Math.max(0, scheduledUntil - audioContext.currentTime) * 1000;
+          firstPlaybackDelayMs = estimatedOutputAt - turnEndedAt;
+          playbackLatencySamples.push({ waitMs: Number(byId("silence-wait").value), delayMs: firstPlaybackDelayMs });
+        }
+        source.start(scheduledUntil);
+        scheduledUntil += buffer.duration;
+        scheduledAudioChunks++;
+        updateAudioDiagnostics();
+        botSpeaking = true;
+        callStatus("Speaking · you can interrupt", "ok");
+        micStatus("Microphone on · watching for interruption", "ok");
+      }).catch(error => {
+        if (playbackSession !== sessionGeneration) return;
+        playbackError = error.message;
+        updateAudioDiagnostics();
+        callStatus(`Audio playback error: ${error.message}`, "error");
+      });
+    }
+    function addCompletedTurn() {
+      if (!currentTurn || (!currentTurn.transcript && !currentTurn.answer)) return;
+      completedTurns++;
+      const item = document.createElement("li");
+      const prompt = document.createElement("p");
+      const reply = document.createElement("p");
+      const meta = document.createElement("small");
+      prompt.textContent = `You: ${currentTurn.transcript || "(not recognized)"}`;
+      reply.textContent = `Assistant: ${currentTurn.answer || "(no reply)"}`;
+      meta.textContent = currentTurn.firstAudio == null
+        ? `Turn ${completedTurns}`
+        : `Turn ${completedTurns} · first audio ${(currentTurn.firstAudio * 1000).toFixed(0)} ms after you finished`;
+      item.append(prompt, reply, meta);
+      byId("turn-history").prepend(item);
+      currentTurn = null;
+    }
+    async function handleEvent(event) {
+      switch (event.type) {
+        case "ready":
+          callStatus("Assistant connected · opening microphone…", "wait");
+          micStatus("Microphone off · connecting", "wait");
+          break;
+        case "listening":
+          addCompletedTurn();
+          currentTurn = { transcript: "", answer: "", firstAudio: null };
+          byId("live-transcript").textContent = "Listening for your question…";
+          byId("live-answer").textContent = "—";
+          byId("call-timing").textContent = "Listening for your question…";
+          callStatus("Listening for your question…", "ok");
+          micStatus("Microphone on · listening locally", "ok");
+          break;
+        case "partial_transcript":
+          currentTurn ||= { transcript: "", answer: "", firstAudio: null };
+          currentTurn.transcript = event.text;
+          byId("live-transcript").textContent = event.text;
+          if (speaking) callStatus("Hearing your words…", "ok");
+          if (speaking) micStatus(`Speech detected · sending to ${activeProvider === "gemini" ? "Gemini" : "local assistant"}`, "ok");
+          break;
+        case "transcript":
+          currentTurn ||= { transcript: "", answer: "", firstAudio: null };
+          currentTurn.transcript = event.text;
+          byId("live-transcript").textContent = event.text;
+          callStatus(speaking
+            ? "Hearing your words…"
+            : "Transcription received · finding an answer…", speaking ? "ok" : "wait");
+          micStatus(speaking
+            ? `Speech detected · sending to ${activeProvider === "gemini" ? "Gemini" : "local assistant"}`
+            : "Microphone on · waiting for reply", speaking ? "ok" : "wait");
+          break;
+        case "faq_ready": callStatus("Preparing a matching approved answer…", "wait"); break;
+        case "processing":
+          serverWorkPending = true;
+          callStatus("Transcribing your question…", "wait");
+          break;
+        case "stage":
+          if (event.stage === "lookup") callStatus("Checking approved business information…", "wait");
+          else if (event.stage === "checking_draft") callStatus("Checking a prepared reply against your words…", "wait");
+          else if (event.stage === "generate") callStatus("Writing a reply…", "wait");
+          else if (event.stage === "prepare_faq") callStatus("Preparing the approved answer…", "wait");
+          break;
+        case "answer":
+          clearTimeout(replyWaitTimer);
+          replyWaitTimer = 0;
+          serverWorkPending = true;
+          currentTurn ||= { transcript: "", answer: "", firstAudio: null };
+          currentTurn.answer = event.text;
+          currentTurn.source = event.source;
+          byId("live-answer").textContent = event.text;
+          callStatus(event.source === "gemini_live"
+            ? "Forming your spoken reply…"
+            : "Preparing speech for your reply…", "wait");
+          if (event.source === "gemini_live" && !audioWaitTimer && receivedAudioChunks === 0) {
+            audioWaitTimer = setTimeout(() => {
+              audioWaitTimer = 0;
+              if (receivedAudioChunks === 0) {
+                callStatus("Reply text received · waiting for Gemini voice…", "wait");
+              }
+            }, 2000);
+          }
+          break;
+        case "audio_chunk":
+          clearTimeout(replyWaitTimer);
+          replyWaitTimer = 0;
+          clearTimeout(audioWaitTimer);
+          audioWaitTimer = 0;
+          if (receivedAudioChunks === 0 && turnEndedAt != null) {
+            firstChunkDelayMs = performance.now() - turnEndedAt;
+          }
+          receivedAudioChunks++;
+          updateAudioDiagnostics();
+          decodeAndPlay(event.audio_base64, event.sample_rate, event.format);
+          break;
+        case "assistant_done": {
+          clearTimeout(audioWaitTimer);
+          audioWaitTimer = 0;
+          clearTimeout(replyWaitTimer);
+          replyWaitTimer = 0;
+          serverWorkPending = false;
+          assistantResponseComplete = true;
+          const timing = event.timings || {};
+          if (currentTurn) currentTurn.firstAudio = timing.end_to_first_audio_seconds;
+          const firstAudio = timing.end_to_first_audio_seconds;
+          const sourceName = event.source === "gemini_live"
+            ? "Gemini Live"
+            : event.source === "faq"
+            ? "local FAQ"
+            : event.source === "speculative_llm" ? "prepared Qwen reply" : "Qwen local";
+          turnAudioTiming = firstAudio == null
+            ? "Reply ready · first-audio timing unavailable."
+            : `First audio ${(firstAudio * 1000).toFixed(0)} ms after turn end · ${sourceName}`;
+          updateAudioDiagnostics();
+          playbackChain.then(updateAudioDiagnostics);
+          addCompletedTurn();
+          callStatus(receivedAudioChunks === 0
+            ? "Reply finished, but no audio arrived."
+            : (botSpeaking ? "Speaking · you can interrupt" : "Reply audio ready"),
+          receivedAudioChunks === 0 ? "error" : "ok");
+          micStatus(botSpeaking
+            ? "Microphone on · watching for interruption"
+            : "Microphone on · listening locally", "ok");
+          finishPlaybackIfDone();
+          break;
+        }
+        case "turn_decision":
+          if (event.check_id !== turnCheckId || !pendingTurnCheck) break;
+          pendingTurnCheck = false;
+          if (event.available && event.complete && speaking) {
+            endTurn();
+          } else if (event.available && speaking) {
+            nextTurnCheckAt = performance.now() + 300;
+            callStatus("Listening for the rest of your thought…", "wait");
+          }
+          break;
+        case "interrupted":
+          clearTimeout(audioWaitTimer);
+          audioWaitTimer = 0;
+          clearTimeout(replyWaitTimer);
+          replyWaitTimer = 0;
+          serverWorkPending = false;
+          callStatus("Interruption heard · listening to you…", "ok");
+          micStatus("Speech detected · listening to you", "ok");
+          break;
+        case "speculative_ready": callStatus("Preparing a possible reply…", "wait"); break;
+        case "turn_limit":
+          speaking = false;
+          sendEvent("turn_end");
+          callStatus("Long turn · finishing this part", "wait");
+          break;
+        case "error":
+          serverWorkPending = false;
+          clearTimeout(replyWaitTimer);
+          replyWaitTimer = 0;
+          callStatus(event.message, "error");
+          micStatus("Assistant connection error", "error");
+          break;
+        case "callback_status":
+          byId("callback-inbox-status").textContent = event.message;
+          break;
+        case "callback_saved":
+          refreshCallbackInbox();
+          break;
+      }
+    }
+    async function refreshCallbackInbox() {
+      const status = byId("callback-inbox-status");
+      const list = byId("callback-inbox-list");
+      status.textContent = "Loading saved messages…";
+      try {
+        const response = await fetch("/api/callback-messages", { credentials: "same-origin" });
+        if (!response.ok) throw new Error(`Inbox request failed (${response.status}).`);
+        const messages = await response.json();
+        list.replaceChildren();
+        for (const message of messages) {
+          const item = document.createElement("li");
+          const detail = document.createElement("p");
+          detail.textContent = `${message.caller_name} · ${message.callback_number}\n${message.message}`;
+          const meta = document.createElement("small");
+          meta.textContent = `Received ${new Date(message.created_at).toLocaleString()} · expires ${new Date(message.expires_at).toLocaleString()}`;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "secondary";
+          remove.textContent = "Delete after handling";
+          remove.addEventListener("click", async () => {
+            const deleted = await fetch(`/api/callback-messages/${encodeURIComponent(message.message_id)}`, {
+              method: "DELETE", credentials: "same-origin"
+            });
+            if (!deleted.ok) {
+              status.textContent = `Could not delete message (${deleted.status}).`;
+              return;
+            }
+            refreshCallbackInbox();
+          });
+          item.append(detail, meta, remove);
+          list.append(item);
+        }
+        status.textContent = messages.length ? `${messages.length} saved message${messages.length === 1 ? "" : "s"}.` : "No saved messages.";
+      } catch (error) {
+        status.textContent = `Inbox unavailable: ${error.message}`;
+      }
+    }
+    function startTurn(interruptedAssistant = false) {
+      if (speaking) return;
+      clearTimeout(replyWaitTimer);
+      replyWaitTimer = 0;
+      speaking = true;
+      micStatus(`Speech detected · sending to ${activeProvider === "gemini" ? "Gemini" : "local assistant"}`, "ok");
+      bargeInTurn = interruptedAssistant;
+      receivedAudioChunks = 0;
+      scheduledAudioChunks = 0;
+      finishedAudioChunks = 0;
+      playbackError = "";
+      clearTimeout(audioWaitTimer);
+      audioWaitTimer = 0;
+      assistantResponseComplete = false;
+      turnAudioTiming = "Waiting for reply audio…";
+      turnEndedAt = null;
+      firstChunkDelayMs = null;
+      firstPlaybackDelayMs = null;
+      silenceMs = 0;
+      interruptCandidateMs = 0;
+      pendingTurnCheck = false;
+      nextTurnCheckAt = 0;
+      updateAudioDiagnostics();
+      sendEvent("speech_start");
+      const bufferedSpeech = candidateAudio.length ? candidateAudio : preRoll;
+      for (const frame of bufferedSpeech) ws.send(frame);
+      preRoll = [];
+      candidateAudio = [];
+      capturingCandidate = false;
+      candidateQuietMs = 0;
+      maxTurnTimer = setTimeout(endTurn, 25_000);
+    }
+    function endTurn() {
+      if (!speaking) return;
+      speaking = false;
+      // Mark the assistant as busy immediately. Gemini does not send a
+      // separate "thinking" event, so otherwise room noise can be mistaken
+      // for a fresh caller turn before the first reply audio arrives.
+      serverWorkPending = true;
+      turnEndedAt = performance.now();
+      clearTimeout(maxTurnTimer);
+      clearTimeout(audioWaitTimer);
+      audioWaitTimer = 0;
+      pendingTurnCheck = false;
+      sendEvent("turn_end");
+      micStatus("Microphone on · waiting for reply", "wait");
+      callStatus(activeProvider === "gemini"
+        ? "Sending your turn to Gemini…"
+        : "Transcribing your question…", "wait");
+      clearTimeout(replyWaitTimer);
+      replyWaitTimer = setTimeout(() => {
+        if (!serverWorkPending) return;
+        serverWorkPending = false;
+        callStatus(activeProvider === "gemini"
+          ? "Gemini has not replied · please say that again"
+          : "The assistant has not replied · please try again", "error");
+        micStatus("No reply yet · listening for another try", "error");
+      }, 12_000);
+    }
+    function monitorMic() {
+      if (!analyser) return;
+      const now = performance.now();
+      const elapsedMs = lastMonitorAt ? now - lastMonitorAt : 16;
+      lastMonitorAt = now;
+      const samples = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) sum += sample * sample;
+      const rms = Math.sqrt(sum / samples.length);
+      const meterValue = Math.min(100, Math.round(rms * 500));
+      byId("call-level").style.width = `${meterValue}%`;
+      byId("call-level").parentElement.setAttribute("aria-valuenow", String(meterValue));
+      if (!capturingCandidate && !speaking && !botSpeaking) {
+        noiseFloorRms = noiseFloorRms * 0.98 + rms * 0.02;
+      }
+      const speechThreshold = Math.max(
+        botSpeaking ? 0.018 : 0.006,
+        noiseFloorRms * (botSpeaking ? 3 : 2.5)
+      );
+      const triggerValue = Math.max(1, Math.round(speechThreshold * 500));
+      if (now - lastLevelUiAt > 120) {
+        byId("mic-level-readout").textContent = `Input level ${meterValue}/100 · speech trigger ${triggerValue}/100`;
+        lastLevelUiAt = now;
+      }
+      if (rms >= speechThreshold) {
+        if (!capturingCandidate) {
+          capturingCandidate = true;
+          candidateAudio = preRoll.slice();
+        }
+        candidateQuietMs = 0;
+        // Do not treat room noise as barge-in while the assistant is still
+        // preparing its first audio. Start the interruption timer only once
+        // playback is actually audible.
+        if (serverWorkPending && !botSpeaking) interruptCandidateMs = 0;
+        else interruptCandidateMs += elapsedMs;
+        silenceMs = 0;
+        if (!speaking) micStatus("Sound detected · checking for speech", "wait");
+        if (speaking && pendingTurnCheck) {
+          pendingTurnCheck = false;
+          sendEvent("turn_resume");
+        }
+        // Gemini's built-in VAD treats even a short acknowledgement as barge-in.
+        // Hold audio locally while it is speaking and signal activity only after
+        // sustained speech; buffered candidate audio preserves the start of a
+        // real interruption once that threshold is crossed.
+        const waitingForReplyAudio = serverWorkPending && !botSpeaking;
+        const interruptingAssistant = botSpeaking;
+        const requiredSpeechMs = interruptingAssistant ? 350 : 120;
+        if (!speaking && !waitingForReplyAudio && interruptCandidateMs >= requiredSpeechMs) {
+          if (interruptingAssistant) {
+            stopPlayback();
+            sendEvent("interrupt");
+            serverWorkPending = false;
+          }
+          startTurn(interruptingAssistant);
+        }
+      } else {
+        if (capturingCandidate) {
+          candidateQuietMs += elapsedMs;
+          if (candidateQuietMs > 120) {
+            capturingCandidate = false;
+            candidateAudio = [];
+            interruptCandidateMs = 0;
+            candidateQuietMs = 0;
+            if (!speaking) micStatus("Microphone on · listening locally", "ok");
+          }
+        }
+        if (speaking) {
+          silenceMs += elapsedMs;
+          if (
+            silenceMs >= EARLY_TURN_CHECK_MS &&
+            !pendingTurnCheck &&
+            now >= nextTurnCheckAt
+          ) {
+            pendingTurnCheck = true;
+            nextTurnCheckAt = now + 300;
+            turnCheckId++;
+            ws?.send(JSON.stringify({ type: "turn_check", check_id: turnCheckId }));
+          }
+          const endWaitMs = Math.min(
+            Number(byId("silence-wait").value),
+            bargeInTurn ? 400 : Number.POSITIVE_INFINITY
+          );
+          if (silenceMs >= endWaitMs) endTurn();
+        }
+      }
+      monitorFrame = requestAnimationFrame(monitorMic);
+    }
+    async function beginSession() {
+      const sessionId = ++sessionGeneration;
+      speaking = false;
+      botSpeaking = false;
+      serverWorkPending = false;
+      capturingCandidate = false;
+      candidateAudio = [];
+      candidateQuietMs = 0;
+      interruptCandidateMs = 0;
+      silenceMs = 0;
+      bargeInTurn = false;
+      currentTurn = null;
+      receivedAudioChunks = 0;
+      scheduledAudioChunks = 0;
+      finishedAudioChunks = 0;
+      playbackError = "";
+      assistantResponseComplete = false;
+      turnAudioTiming = "";
+      turnEndedAt = null;
+      firstChunkDelayMs = null;
+      firstPlaybackDelayMs = null;
+      updateAudioDiagnostics();
+      byId("call-start").disabled = true;
+      activeProvider = byId("voice-provider").value;
+      byId("voice-provider").disabled = true;
+      micStatus("Microphone off · connecting", "wait");
+      callStatus("Connecting…", "wait");
+      try {
+        // Resume output directly in the Start button gesture. Waiting for the
+        // WebSocket and microphone permission first can leave the first reply
+        // unable to play under browser autoplay policies.
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioContextClass();
+        await audioContext.resume();
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const endpoint = activeProvider === "gemini" ? "/api/gemini-stream" : "/api/stream";
+        const socket = new WebSocket(`${protocol}//${location.host}${endpoint}`);
+        ws = socket;
+        socket.binaryType = "arraybuffer";
+        let sessionReady = false;
+        await new Promise((resolve, reject) => {
+          socket.onmessage = message => {
+            if (sessionId !== sessionGeneration) return;
+            if (typeof message.data !== "string") return;
+            try {
+              const event = JSON.parse(message.data);
+              handleEvent(event);
+              if (event.type === "error") reject(new Error(event.message));
+              else if (event.type === "ready") {
+                sessionReady = true;
+                resolve();
+              }
+            } catch (error) { reject(new Error(`Assistant event error: ${error.message}`)); }
+          };
+          socket.onerror = () => {
+            if (sessionId === sessionGeneration) reject(new Error("Could not connect to the local assistant."));
+          };
+          socket.onopen = () => {};
+          socket.onclose = () => {
+            if (sessionId !== sessionGeneration) return;
+            if (!sessionReady) reject(new Error("Assistant connection closed before it was ready."));
+            else if (stream) stopSession("Connection closed. Select Start conversation to reconnect.", false, sessionId);
+          };
+        });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        micStatus("Microphone on · starting local speech check", "wait");
+        stream.getAudioTracks().forEach(track => track.addEventListener("ended", () => {
+          if (stream) micStatus("Microphone stopped · conversation cannot hear you", "error");
+        }));
+        lastMonitorAt = 0;
+        await audioContext.audioWorklet.addModule("/static/mic-processor.js");
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        micNode = new AudioWorkletNode(audioContext, "pcm-capture", { processorOptions: { targetRate: TARGET_RATE } });
+        silentGain = audioContext.createGain();
+        silentGain.gain.value = 0;
+        source.connect(micNode);
+        micNode.connect(silentGain);
+        silentGain.connect(audioContext.destination);
+        micNode.port.onmessage = message => {
+          if (!(message.data instanceof ArrayBuffer) || ws?.readyState !== WebSocket.OPEN) return;
+          if (speaking) ws.send(message.data);
+          else if (capturingCandidate) {
+            candidateAudio.push(message.data);
+            if (candidateAudio.length > MAX_CANDIDATE_FRAMES) candidateAudio.shift();
+          }
+          else {
+            preRoll.push(message.data);
+            if (preRoll.length > 10) preRoll.shift();
+          }
+        };
+        byId("call-stop").disabled = false;
+        callStatus("Listening for your question…", "ok");
+        micStatus("Microphone on · listening locally", "ok");
+        monitorMic();
+      } catch (error) {
+        await stopSession(`Could not start: ${error.message}`, true);
+      }
+    }
+    async function stopSession(message = "Conversation ended.", keepError = false, expectedSessionId = null) {
+      if (expectedSessionId !== null && expectedSessionId !== sessionGeneration) return;
+      sessionGeneration++;
+      cancelAnimationFrame(monitorFrame);
+      clearTimeout(maxTurnTimer);
+      clearTimeout(audioWaitTimer);
+      audioWaitTimer = 0;
+      addCompletedTurn();
+      stopPlayback();
+      const socket = ws;
+      ws = null;
+      if (socket?.readyState === WebSocket.OPEN) {
+        try { socket.send(JSON.stringify({ type: "stop" })); } catch (_) {}
+        socket.close();
+      }
+      if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+      if (audioContext) { await audioContext.close(); audioContext = null; }
+      analyser = null;
+      speaking = false;
+      botSpeaking = false;
+      serverWorkPending = false;
+      pendingTurnCheck = false;
+      preRoll = [];
+      candidateAudio = [];
+      capturingCandidate = false;
+      candidateQuietMs = 0;
+      interruptCandidateMs = 0;
+      silenceMs = 0;
+      bargeInTurn = false;
+      assistantResponseComplete = false;
+      currentTurn = null;
+      byId("call-level").style.width = "0";
+      byId("call-level").parentElement.setAttribute("aria-valuenow", "0");
+      byId("mic-level-readout").textContent = "Input level 0/100 · speech trigger 3/100";
+      byId("call-start").disabled = false;
+      byId("call-stop").disabled = true;
+      clearTimeout(replyWaitTimer);
+      replyWaitTimer = 0;
+      byId("voice-provider").disabled = false;
+      activeProvider = null;
+      micStatus("Microphone off", keepError ? "error" : "");
+      callStatus(message, keepError ? "error" : "");
+    }
+    byId("call-start").addEventListener("click", beginSession);
+    byId("call-stop").addEventListener("click", () => stopSession("Conversation ended."));
+    byId("callback-inbox-refresh").addEventListener("click", refreshCallbackInbox);
+    byId("voice-provider").addEventListener("change", event => {
+      const cloud = event.target.value === "gemini";
+      byId("cloud-notice").hidden = !cloud;
+      byId("silence-wait").disabled = false;
+    });
+  </script>
+</body>
+</html>
